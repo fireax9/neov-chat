@@ -30,6 +30,14 @@
           }
         },
         {
+          "client_id": "963619723148-soorik45pr6jd3qeg43lk267plknfdtk.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.neovchat.kqzwmr",
+            "certificate_hash": "d3a1a7cad2a784260a310c870d6150d90e5fb0c6"
+          }
+        },
+        {
           "client_id": "963619723148-cpf8lp79vm3kbtnue92vuuk1gi956nqa.apps.googleusercontent.com",
           "client_type": 3
         }
