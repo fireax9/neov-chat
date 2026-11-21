@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-neovchat-0ab8e250-6af4-4255-aba0-d5aa3e08df71</string>
+    <string name="recaptcha_site_key" translatable="false">6LeY3CsuAAAAAEo_mg0EPbPd7GaNBS9YxTVoGa3a</string>
+</resources>

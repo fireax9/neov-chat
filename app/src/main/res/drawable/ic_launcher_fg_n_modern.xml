@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Over-ear Headphone Band -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:pathData="M 27,58 C 27,31 41,24 54,24 C 67,24 81,31 81,58" />
+    <!-- Left Earcup -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 23,51 L 29,51 C 31.5,51 33,53 33,55.5 L 33,69.5 C 33,72 31.5,74 29,74 L 23,74 C 20.5,74 19,72 19,69.5 L 19,55.5 C 19,53 20.5,51 23,51 Z" />
+    <!-- Right Earcup -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 79,51 L 85,51 C 87.5,51 89,53 89,55.5 L 89,69.5 C 89,72 87.5,74 85,74 L 79,74 C 76.5,74 75,72 75,69.5 L 75,55.5 C 75,53 76.5,51 79,51 Z" />
+    <!-- Bold N Glyph -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="7.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 41,75 L 41,42 L 67,75 L 67,42" />
+</vector>
