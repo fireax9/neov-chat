@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "963619723148-5i39cc016h4e2et8nlcdr7hlh84nfmub.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.neovchat.kqzwmr",
+            "certificate_hash": "d4bb36cc8adf31f45782b4a07abce21c787b73cb"
+          }
+        },
+        {
           "client_id": "963619723148-ignn9nk8c5g05adpr4u94qck0gnb8q02.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
