@@ -77,8 +77,9 @@ fun AppEntranceIntroOverlay(
     var showCursor by remember { mutableStateOf(false) }
     var showTagline by remember { mutableStateOf(false) }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(Unit) {
-        SoundEffectsManager.play(AppSoundEffect.ENTRANCE_CHIME)
+        SoundEffectsManager.playEntranceOnAppOpen(context)
         // Stage 1: Pop the lowercase 'n' emblem BIG in the center
         glowAlpha.animateTo(0.85f, animationSpec = tween(260, easing = FastOutSlowInEasing))
         logoScale.animateTo(

@@ -1,13 +1,24 @@
 package com.example.ui.cordly
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
 import com.example.data.model.CallSignal
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
+import org.webrtc.Camera1Enumerator
 import org.webrtc.Camera2Enumerator
 import org.webrtc.CameraEnumerator
 import org.webrtc.CameraVideoCapturer
@@ -16,6 +27,7 @@ import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
+import org.webrtc.JavaI420Buffer
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.MediaStreamTrack
@@ -27,14 +39,19 @@ import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
+import org.webrtc.VideoFrame
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import org.webrtc.audio.JavaAudioDeviceModule
+import java.lang.ref.WeakReference
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Low-latency P2P WebRTC audio/video engine with:
@@ -57,6 +74,7 @@ class WebRtcCallManager(
     private val onConsumeSignal: (signalId: String) -> Unit
 ) {
     private val appContext = context.applicationContext
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
     private val watchdogExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val released = AtomicBoolean(false)
@@ -72,6 +90,16 @@ class WebRtcCallManager(
     private var localVideoTrackImpl: VideoTrack? = null
     private var videoCapturer: CameraVideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
+
+    private var lifecycleOwnerRef: WeakReference<LifecycleOwner>? = null
+    private var cameraXProvider: ProcessCameraProvider? = null
+    private var cameraXPreview: Preview? = null
+    private var cameraXAnalysis: ImageAnalysis? = null
+    @Volatile
+    private var localSurfaceProvider: Preview.SurfaceProvider? = null
+    private val analysisExecutor = Executors.newSingleThreadExecutor()
+    private var usingCameraX = false
+    private var wantFrontCamera = true
 
     private val peerConnections = ConcurrentHashMap<String, PeerConnection>()
     private val audioTransceivers = ConcurrentHashMap<String, RtpTransceiver>()
@@ -108,6 +136,17 @@ class WebRtcCallManager(
 
     private val _connectedPeerCount = MutableStateFlow(0)
     val connectedPeerCount: StateFlow<Int> = _connectedPeerCount.asStateFlow()
+
+    private val _cameraError = MutableStateFlow<String?>(null)
+    val cameraError: StateFlow<String?> = _cameraError.asStateFlow()
+
+    private val _usingCameraXPreview = MutableStateFlow(false)
+    val usingCameraXPreview: StateFlow<Boolean> = _usingCameraXPreview.asStateFlow()
+
+    private val _localFrameProduced = MutableStateFlow(false)
+    val localFrameProduced: StateFlow<Boolean> = _localFrameProduced.asStateFlow()
+
+    private var cameraRetryScheduled = false
 
     private val iceServers = listOf(
         PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
@@ -146,9 +185,13 @@ class WebRtcCallManager(
         hasCameraPermission: Boolean,
         videoEnabled: Boolean,
         muted: Boolean,
-        preset: VideoQualityPreset
+        preset: VideoQualityPreset,
+        lifecycleOwner: LifecycleOwner? = null
     ) {
         if (released.get()) return
+        if (lifecycleOwner != null) {
+            lifecycleOwnerRef = WeakReference(lifecycleOwner)
+        }
         executor.execute {
             if (released.get()) return@execute
             currentMuted = muted
@@ -181,8 +224,15 @@ class WebRtcCallManager(
         }
     }
 
-    fun setVideoEnabled(enabled: Boolean, hasCameraPermission: Boolean) {
+    fun setVideoEnabled(
+        enabled: Boolean,
+        hasCameraPermission: Boolean,
+        lifecycleOwner: LifecycleOwner? = null
+    ) {
         if (released.get()) return
+        if (lifecycleOwner != null) {
+            lifecycleOwnerRef = WeakReference(lifecycleOwner)
+        }
         executor.execute {
             if (released.get()) return@execute
             currentVideoEnabled = enabled && hasCameraPermission
@@ -204,13 +254,96 @@ class WebRtcCallManager(
         }
     }
 
+    fun retryLocalCamera(
+        hasCameraPermission: Boolean,
+        lifecycleOwner: LifecycleOwner? = null
+    ) {
+        if (released.get() || !hasCameraPermission) return
+        if (lifecycleOwner != null) {
+            lifecycleOwnerRef = WeakReference(lifecycleOwner)
+        }
+        executor.execute {
+            if (released.get()) return@execute
+            _cameraError.value = null
+            cameraRetryScheduled = false
+            disposeLocalCameraResources()
+            currentVideoEnabled = true
+            startLocalCameraInternal(currentPreset)
+        }
+    }
+
+    fun setLocalPreviewSurfaceProvider(
+        provider: Preview.SurfaceProvider?,
+        lifecycleOwner: LifecycleOwner? = null
+    ) {
+        if (released.get()) return
+        localSurfaceProvider = provider
+        if (lifecycleOwner != null) {
+            lifecycleOwnerRef = WeakReference(lifecycleOwner)
+        }
+        mainHandler.post {
+            try {
+                cameraXPreview?.surfaceProvider = provider
+            } catch (_: Throwable) {
+            }
+        }
+        if (provider != null) {
+            executor.execute {
+                if (!released.get() && currentVideoEnabled && !cameraStarted) {
+                    startLocalCameraInternal(currentPreset)
+                }
+            }
+        }
+    }
+
     fun switchCamera() {
         if (released.get()) return
         executor.execute {
+            if (released.get()) return@execute
+            if (usingCameraX) {
+                val provider = cameraXProvider
+                val owner = lifecycleOwnerRef?.get()
+                val preview = cameraXPreview
+                val analysis = cameraXAnalysis
+                if (provider != null && owner != null && preview != null) {
+                    val targetFront = !wantFrontCamera
+                    mainHandler.post {
+                        try {
+                            val nextSelector = if (targetFront) {
+                                CameraSelector.DEFAULT_FRONT_CAMERA
+                            } else {
+                                CameraSelector.DEFAULT_BACK_CAMERA
+                            }
+                            if (!provider.hasCamera(nextSelector)) {
+                                return@post
+                            }
+                            preview.surfaceProvider = localSurfaceProvider
+                            provider.unbindAll()
+                            try {
+                                if (analysis != null) {
+                                    provider.bindToLifecycle(owner, nextSelector, preview, analysis)
+                                } else {
+                                    provider.bindToLifecycle(owner, nextSelector, preview)
+                                }
+                            } catch (_: Throwable) {
+                                provider.unbindAll()
+                                provider.bindToLifecycle(owner, nextSelector, preview)
+                            }
+                            wantFrontCamera = targetFront
+                            _isUsingFrontCamera.value = targetFront
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "CameraX switch failed", t)
+                        }
+                    }
+                }
+                return@execute
+            }
+
             val capturer = videoCapturer ?: return@execute
             try {
                 capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
                     override fun onCameraSwitchDone(isFrontCamera: Boolean) {
+                        wantFrontCamera = isFrontCamera
                         _isUsingFrontCamera.value = isFrontCamera
                     }
 
@@ -308,30 +441,449 @@ class WebRtcCallManager(
     }
 
     private fun startLocalCameraInternal(preset: VideoQualityPreset) {
-        if (cameraStarted) return
+        if (cameraStarted || released.get()) return
+
+        // Prefer CameraX first (matches working in-app CameraX Preview hardware path on emulators/devices).
+        if (startCameraXCaptureInternal(preset)) {
+            return
+        }
+
+        val enumerators = buildList {
+            try {
+                if (Camera2Enumerator.isSupported(appContext)) {
+                    add(Camera2Enumerator(appContext))
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "Camera2Enumerator check failed", t)
+            }
+            add(Camera1Enumerator(true))
+            add(Camera1Enumerator(false))
+        }
+
+        val cameraEventsHandler = object : CameraVideoCapturer.CameraEventsHandler {
+            override fun onCameraError(errorDescription: String?) {
+                Log.e(TAG, "WebRTC camera error: $errorDescription")
+                _cameraError.value = errorDescription ?: "Camera error"
+                if (!released.get() && currentVideoEnabled && !usingCameraX) {
+                    executor.execute {
+                        if (!released.get() && !usingCameraX && currentVideoEnabled) {
+                            disposeLocalCameraResources()
+                            if (!cameraRetryScheduled) {
+                                cameraRetryScheduled = true
+                                watchdogExecutor.schedule({
+                                    executor.execute {
+                                        if (!released.get() && !cameraStarted && currentVideoEnabled) {
+                                            startLocalCameraInternal(currentPreset)
+                                        }
+                                    }
+                                }, 400L, TimeUnit.MILLISECONDS)
+                            }
+                        }
+                    }
+                }
+            }
+
+            override fun onCameraDisconnected() {
+                Log.w(TAG, "WebRTC camera disconnected")
+            }
+
+            override fun onCameraFreezed(errorDescription: String?) {
+                Log.w(TAG, "WebRTC camera freezed: $errorDescription")
+            }
+
+            override fun onCameraOpening(cameraName: String?) {
+                Log.d(TAG, "Opening camera: $cameraName")
+            }
+
+            override fun onFirstFrameAvailable() {
+                _cameraError.value = null
+            }
+
+            override fun onCameraClosed() {}
+        }
+
+        for (enumerator in enumerators) {
+            val names = try {
+                enumerator.deviceNames
+            } catch (_: Throwable) {
+                emptyArray()
+            }
+            val orderedNames = buildList {
+                addAll(names.filter { enumerator.isFrontFacing(it) })
+                addAll(names.filter { !enumerator.isFrontFacing(it) })
+            }
+            for (deviceName in orderedNames) {
+                var capturer: CameraVideoCapturer? = null
+                var helper: SurfaceTextureHelper? = null
+                var src: VideoSource? = null
+                try {
+                    capturer = enumerator.createCapturer(deviceName, cameraEventsHandler) ?: continue
+                    val isFront = try {
+                        enumerator.isFrontFacing(deviceName)
+                    } catch (_: Throwable) {
+                        true
+                    }
+                    helper = SurfaceTextureHelper.create("NeovCaptureThread", eglBase.eglBaseContext)
+                    src = factory.createVideoSource(capturer.isScreencast)
+                    capturer.initialize(helper, appContext, src.capturerObserver)
+
+                    val (capW, capH, capFps) = selectCaptureFormat(enumerator, deviceName, preset)
+                    try {
+                        capturer.startCapture(capW, capH, capFps)
+                    } catch (firstStartErr: Throwable) {
+                        Log.w(TAG, "startCapture($capW x $capH @ $capFps) failed for $deviceName, retrying 640x480", firstStartErr)
+                        capturer.startCapture(640, 480, 24)
+                    }
+
+                    val track = factory.createVideoTrack("NEOV_VIDEO_0", src)
+                    track.setEnabled(currentVideoEnabled)
+
+                    videoCapturer = capturer
+                    surfaceTextureHelper = helper
+                    videoSource = src
+                    localVideoTrackImpl = track
+                    usingCameraX = false
+                    _usingCameraXPreview.value = false
+                    _localFrameProduced.value = true
+                    wantFrontCamera = isFront
+                    _isUsingFrontCamera.value = isFront
+                    _localVideoTrack.value = track
+                    _cameraError.value = null
+                    cameraStarted = true
+
+                    peerConnections.forEach { (peerId, pc) ->
+                        attachVideoTrackToPeer(peerId, pc, track)
+                        applyVideoBitrateToPeer(pc, preset)
+                    }
+                    return
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Camera start attempt failed for $deviceName via ${enumerator::class.simpleName}", t)
+                    try {
+                        capturer?.stopCapture()
+                    } catch (_: Throwable) {
+                    }
+                    try {
+                        capturer?.dispose()
+                    } catch (_: Throwable) {
+                    }
+                    try {
+                        src?.dispose()
+                    } catch (_: Throwable) {
+                    }
+                    try {
+                        helper?.dispose()
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+        }
+
+        _cameraError.value = "Could not open camera on this device"
+        if (!cameraRetryScheduled && currentVideoEnabled && !released.get()) {
+            cameraRetryScheduled = true
+            try {
+                watchdogExecutor.schedule({
+                    if (!released.get() && !cameraStarted && currentVideoEnabled) {
+                        executor.execute {
+                            if (!released.get() && !cameraStarted && currentVideoEnabled) {
+                                startLocalCameraInternal(currentPreset)
+                            }
+                        }
+                    }
+                }, 450L, TimeUnit.MILLISECONDS)
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    private fun startCameraXCaptureInternal(preset: VideoQualityPreset): Boolean {
+        val owner = lifecycleOwnerRef?.get() ?: return false
+        var src: VideoSource? = null
+        var track: VideoTrack? = null
         try {
-            val enumerator = Camera2Enumerator(appContext)
-            val capturer = createCapturer(enumerator) ?: return
-            val helper = SurfaceTextureHelper.create("NeovCaptureThread", eglBase.eglBaseContext)
-            val src = factory.createVideoSource(capturer.isScreencast)
-            capturer.initialize(helper, appContext, src.capturerObserver)
-            capturer.startCapture(preset.captureWidth, preset.captureHeight, preset.captureFps)
-            val track = factory.createVideoTrack("NEOV_VIDEO_0", src)
+            src = factory.createVideoSource(false)
+            val observer = src.capturerObserver
+            observer.onCapturerStarted(true)
+
+            val bindResult = AtomicBoolean(false)
+            val bindLatch = CountDownLatch(1)
+            val activeIsFront = AtomicBoolean(wantFrontCamera)
+            val capturedProviderRef = AtomicReference<ProcessCameraProvider?>(null)
+            val capturedPreviewRef = AtomicReference<Preview?>(null)
+            val capturedAnalysisRef = AtomicReference<ImageAnalysis?>(null)
+            val mainExec = ContextCompat.getMainExecutor(appContext)
+
+            val future = ProcessCameraProvider.getInstance(appContext)
+            future.addListener({
+                try {
+                    val provider = future.get()
+                    capturedProviderRef.set(provider)
+                    val preferred = if (wantFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+                    val alternate = if (wantFrontCamera) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                    val selector = when {
+                        provider.hasCamera(preferred) -> {
+                            activeIsFront.set(wantFrontCamera)
+                            preferred
+                        }
+                        provider.hasCamera(alternate) -> {
+                            activeIsFront.set(!wantFrontCamera)
+                            alternate
+                        }
+                        else -> CameraSelector.Builder().build()
+                    }
+
+                    val preview = Preview.Builder().build().apply {
+                        surfaceProvider = localSurfaceProvider
+                    }
+                    val analysis = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                        .build()
+                        .also { ia ->
+                            ia.setAnalyzer(analysisExecutor) { proxy ->
+                                try {
+                                    if (!released.get() && currentVideoEnabled) {
+                                        val i420 = yuv420888ProxyToJavaI420(proxy)
+                                        if (i420 != null) {
+                                            val timestampNs = TimeUnit.MILLISECONDS.toNanos(SystemClock.elapsedRealtime())
+                                            val frame = VideoFrame(i420, proxy.imageInfo.rotationDegrees, timestampNs)
+                                            try {
+                                                observer.onFrameCaptured(frame)
+                                            } finally {
+                                                frame.release()
+                                            }
+                                            if (!_localFrameProduced.value) {
+                                                _localFrameProduced.value = true
+                                            }
+                                            if (_cameraError.value != null) {
+                                                _cameraError.value = null
+                                            }
+                                        }
+                                    }
+                                } catch (t: Throwable) {
+                                    Log.w(TAG, "ImageAnalysis frame conversion error", t)
+                                } finally {
+                                    proxy.close()
+                                }
+                            }
+                        }
+
+                    provider.unbindAll()
+                    try {
+                        provider.bindToLifecycle(owner, selector, preview, analysis)
+                        capturedAnalysisRef.set(analysis)
+                    } catch (dualErr: Throwable) {
+                        Log.w(TAG, "CameraX dual bind failed, retrying Preview-only bind", dualErr)
+                        provider.unbindAll()
+                        provider.bindToLifecycle(owner, selector, preview)
+                        analysis.clearAnalyzer()
+                        capturedAnalysisRef.set(null)
+                    }
+                    capturedPreviewRef.set(preview)
+                    bindResult.set(true)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "CameraX bind failed, falling back to legacy WebRTC camera", t)
+                    bindResult.set(false)
+                } finally {
+                    bindLatch.countDown()
+                }
+            }, mainExec)
+
+            bindLatch.await(4500L, TimeUnit.MILLISECONDS)
+            if (!bindResult.get()) {
+                try { src.dispose() } catch (_: Throwable) {}
+                return false
+            }
+
+            track = factory.createVideoTrack("NEOV_VIDEO_0", src)
             track.setEnabled(currentVideoEnabled)
 
-            videoCapturer = capturer
-            surfaceTextureHelper = helper
+            wantFrontCamera = activeIsFront.get()
+            cameraXProvider = capturedProviderRef.get()
+            cameraXPreview = capturedPreviewRef.get()
+            cameraXAnalysis = capturedAnalysisRef.get()
             videoSource = src
             localVideoTrackImpl = track
-            _localVideoTrack.value = track
+            usingCameraX = true
+            _usingCameraXPreview.value = true
             cameraStarted = true
+            _isUsingFrontCamera.value = wantFrontCamera
+            _localVideoTrack.value = track
+            _cameraError.value = null
 
             peerConnections.forEach { (peerId, pc) ->
                 attachVideoTrackToPeer(peerId, pc, track)
                 applyVideoBitrateToPeer(pc, preset)
             }
+            return true
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to start local camera", t)
+            Log.w(TAG, "startCameraXCaptureInternal exception", t)
+            try { track?.dispose() } catch (_: Throwable) {}
+            try { src?.dispose() } catch (_: Throwable) {}
+            return false
+        }
+    }
+
+    private fun yuv420888ProxyToJavaI420(proxy: ImageProxy): JavaI420Buffer? {
+        if (proxy.planes.size < 3) return null
+        val width = proxy.width
+        val height = proxy.height
+        if (width <= 0 || height <= 0) return null
+
+        val yPlane = proxy.planes[0]
+        val uPlane = proxy.planes[1]
+        val vPlane = proxy.planes[2]
+
+        val i420 = JavaI420Buffer.allocate(width, height)
+        copyPlane(
+            src = yPlane.buffer.duplicate(),
+            rowStride = yPlane.rowStride,
+            pixelStride = yPlane.pixelStride,
+            width = width,
+            height = height,
+            dst = i420.dataY,
+            dstStride = i420.strideY
+        )
+        val chromaW = (width + 1) / 2
+        val chromaH = (height + 1) / 2
+        copyPlane(
+            src = uPlane.buffer.duplicate(),
+            rowStride = uPlane.rowStride,
+            pixelStride = uPlane.pixelStride,
+            width = chromaW,
+            height = chromaH,
+            dst = i420.dataU,
+            dstStride = i420.strideU
+        )
+        copyPlane(
+            src = vPlane.buffer.duplicate(),
+            rowStride = vPlane.rowStride,
+            pixelStride = vPlane.pixelStride,
+            width = chromaW,
+            height = chromaH,
+            dst = i420.dataV,
+            dstStride = i420.strideV
+        )
+        i420.dataY.position(0)
+        i420.dataU.position(0)
+        i420.dataV.position(0)
+        return i420
+    }
+
+    private fun copyPlane(
+        src: ByteBuffer,
+        rowStride: Int,
+        pixelStride: Int,
+        width: Int,
+        height: Int,
+        dst: ByteBuffer,
+        dstStride: Int
+    ) {
+        val cap = src.capacity()
+        for (row in 0 until height) {
+            val srcOffset = row * rowStride
+            val dstOffset = row * dstStride
+            if (srcOffset >= cap) break
+            if (pixelStride == 1) {
+                val copyLen = minOf(width, cap - srcOffset)
+                src.limit(srcOffset + copyLen)
+                src.position(srcOffset)
+                dst.position(dstOffset)
+                dst.put(src)
+                src.limit(cap)
+            } else {
+                for (col in 0 until width) {
+                    val idx = srcOffset + col * pixelStride
+                    if (idx < cap) {
+                        dst.put(dstOffset + col, src.get(idx))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun disposeLocalCameraResources() {
+        cameraStarted = false
+        usingCameraX = false
+        _usingCameraXPreview.value = false
+        _localFrameProduced.value = false
+        _localVideoTrack.value = null
+        try {
+            surfaceTextureHelper?.stopListening()
+        } catch (_: Throwable) {
+        }
+        try {
+            cameraXAnalysis?.clearAnalyzer()
+        } catch (_: Throwable) {
+        }
+        cameraXAnalysis = null
+        cameraXPreview = null
+        val prov = cameraXProvider
+        cameraXProvider = null
+        if (prov != null) {
+            val latch = CountDownLatch(1)
+            mainHandler.post {
+                try {
+                    prov.unbindAll()
+                } catch (_: Throwable) {
+                }
+                latch.countDown()
+            }
+            try {
+                latch.await(1000L, TimeUnit.MILLISECONDS)
+            } catch (_: Throwable) {
+            }
+        }
+        try {
+            videoCapturer?.stopCapture()
+        } catch (_: Throwable) {
+        }
+        try {
+            videoCapturer?.dispose()
+        } catch (_: Throwable) {
+        }
+        videoCapturer = null
+        try {
+            localVideoTrackImpl?.dispose()
+        } catch (_: Throwable) {
+        }
+        localVideoTrackImpl = null
+        try {
+            videoSource?.dispose()
+        } catch (_: Throwable) {
+        }
+        videoSource = null
+        try {
+            surfaceTextureHelper?.dispose()
+        } catch (_: Throwable) {
+        }
+        surfaceTextureHelper = null
+    }
+
+    private fun selectCaptureFormat(
+        enumerator: CameraEnumerator,
+        deviceName: String,
+        preset: VideoQualityPreset
+    ): Triple<Int, Int, Int> {
+        return try {
+            val formats = enumerator.getSupportedFormats(deviceName)
+            if (formats.isNullOrEmpty()) {
+                Triple(preset.captureWidth.coerceAtMost(1280), preset.captureHeight.coerceAtMost(720), preset.captureFps)
+            } else {
+                val targetArea = preset.captureWidth * preset.captureHeight
+                val best = formats.minByOrNull { fmt ->
+                    val areaDiff = kotlin.math.abs(fmt.width * fmt.height - targetArea)
+                    areaDiff
+                }
+                if (best != null) {
+                    val maxFps = (best.framerate.max / 1000).coerceIn(15, preset.captureFps.coerceAtLeast(15))
+                    Triple(best.width, best.height, maxFps)
+                } else {
+                    Triple(640, 480, 24)
+                }
+            }
+        } catch (_: Throwable) {
+            Triple(640, 480, 24)
         }
     }
 
@@ -372,7 +924,7 @@ class WebRtcCallManager(
                 if (transceiver.direction != RtpTransceiver.RtpTransceiverDirection.SEND_RECV) {
                     transceiver.direction = RtpTransceiver.RtpTransceiverDirection.SEND_RECV
                 }
-                if (transceiver.sender.track() == null) {
+                if (transceiver.sender.track() !== track) {
                     transceiver.sender.setTrack(track, false)
                 }
             } else {
@@ -389,23 +941,6 @@ class WebRtcCallManager(
         } catch (t: Throwable) {
             Log.w(TAG, "attachVideoTrackToPeer fallback", t)
         }
-    }
-
-    private fun createCapturer(enumerator: CameraEnumerator): CameraVideoCapturer? {
-        val names = enumerator.deviceNames
-        names.firstOrNull { enumerator.isFrontFacing(it) }?.let { name ->
-            enumerator.createCapturer(name, null)?.let {
-                _isUsingFrontCamera.value = true
-                return it
-            }
-        }
-        names.firstOrNull()?.let { name ->
-            enumerator.createCapturer(name, null)?.let {
-                _isUsingFrontCamera.value = false
-                return it
-            }
-        }
-        return null
     }
 
     private fun applyVideoQualityInternal(preset: VideoQualityPreset) {
@@ -813,8 +1348,13 @@ class WebRtcCallManager(
         _remoteVideoTracks.value = emptyMap()
         _connectedPeerCount.value = 0
 
+        localSurfaceProvider = null
         try {
             watchdogExecutor.shutdownNow()
+        } catch (_: Exception) {
+        }
+        try {
+            analysisExecutor.shutdownNow()
         } catch (_: Exception) {
         }
 
@@ -840,33 +1380,7 @@ class WebRtcCallManager(
                 initialOfferTriggered.clear()
                 connectedPeers.clear()
 
-                try {
-                    videoCapturer?.stopCapture()
-                } catch (_: Exception) {
-                }
-                try {
-                    videoCapturer?.dispose()
-                } catch (_: Exception) {
-                }
-                videoCapturer = null
-
-                try {
-                    localVideoTrackImpl?.dispose()
-                } catch (_: Exception) {
-                }
-                localVideoTrackImpl = null
-
-                try {
-                    videoSource?.dispose()
-                } catch (_: Exception) {
-                }
-                videoSource = null
-
-                try {
-                    surfaceTextureHelper?.dispose()
-                } catch (_: Exception) {
-                }
-                surfaceTextureHelper = null
+                disposeLocalCameraResources()
 
                 try {
                     localAudioTrack?.dispose()

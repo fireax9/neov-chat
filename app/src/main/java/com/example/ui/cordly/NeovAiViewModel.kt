@@ -51,6 +51,10 @@ class NeovAiViewModel(
     fun warmUp() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                com.google.firebase.appcheck.FirebaseAppCheck.getInstance().getAppCheckToken(false)
+            } catch (_: Exception) {
+            }
+            try {
                 repository.warmUp()
             } catch (_: Exception) {
             }

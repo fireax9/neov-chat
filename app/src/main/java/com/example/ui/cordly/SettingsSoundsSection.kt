@@ -23,22 +23,25 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MarkChatUnread
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,8 +70,10 @@ internal fun SettingsSoundsSection(
     onUpdateSoundPrefs: (UserSoundPrefs) -> Unit,
     onOpenShopForRanks: () -> Unit
 ) {
-    val hasNeoPlus = hasRequiredRank(currentRank, CordlyRepository.RANK_NEO_PLUS)
-    val badge = if (hasNeoPlus) null else "NEO+"
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var autoRotateStartup by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(AppAppearanceStore.loadAutoRotateStartupSound(context))
+    }
 
     Column(
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -78,11 +83,11 @@ internal fun SettingsSoundsSection(
             .padding(16.dp)
             .testTag("settings_sounds_section")
     ) {
-        // Top Neo+ Studio Status Banner
+        // Sound Studio Status Banner
         Surface(
-            color = if (hasNeoPlus) CordlyEmerald.copy(alpha = 0.14f) else CordlyAmber.copy(alpha = 0.14f),
+            color = CordlyEmerald.copy(alpha = 0.14f),
             shape = RoundedCornerShape(18.dp),
-            border = BorderStroke(1.2.dp, if (hasNeoPlus) CordlyEmerald else CordlyAmber),
+            border = BorderStroke(1.2.dp, CordlyEmerald),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
@@ -90,28 +95,24 @@ internal fun SettingsSoundsSection(
                 modifier = Modifier
                     .background(
                         Brush.horizontalGradient(
-                            if (hasNeoPlus) {
-                                listOf(CordlyEmerald.copy(alpha = 0.12f), CordlyCyan.copy(alpha = 0.10f))
-                            } else {
-                                listOf(CordlyAmber.copy(alpha = 0.16f), CordlyBlurple.copy(alpha = 0.12f))
-                            }
+                            listOf(CordlyEmerald.copy(alpha = 0.12f), CordlyCyan.copy(alpha = 0.10f))
                         )
                     )
                     .padding(14.dp)
             ) {
                 Icon(
-                    imageVector = if (hasNeoPlus) Icons.Rounded.GraphicEq else Icons.Rounded.Lock,
+                    imageVector = Icons.Rounded.GraphicEq,
                     contentDescription = null,
-                    tint = if (hasNeoPlus) CordlyEmerald else CordlyAmber,
+                    tint = CordlyEmerald,
                     modifier = Modifier.size(26.dp)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (isArabicLocale) {
-                            if (hasNeoPlus) "استوديو أصوات نيو بلس مُفعّل" else "ميزة حصرية لرتبة نيو بلس (Neo+)"
+                            "استوديو الأصوات المخصّصة مُفعّل"
                         } else {
-                            if (hasNeoPlus) "Neo+ Sound Studio Active" else "Exclusive to Neo Plus (Neo+)"
+                            "Custom Sound Studio Active"
                         },
                         style = MaterialTheme.typography.titleSmall,
                         color = CordlyTextPrimary,
@@ -119,29 +120,65 @@ internal fun SettingsSoundsSection(
                     )
                     Text(
                         text = if (isArabicLocale) {
-                            "40 مؤثراً صوتياً احترافياً (10 لكل فئة) لفتح التطبيق والرنين والرسائل والمكالمات."
+                            "اضغط على أي نغمة لتغييرها فوراً — ويتم تشغيل نغمة الفتح المختارة تلقائياً عند دخول التطبيق."
                         } else {
-                            "40 curated sound effects (10 per category) for launch, ringtones, messages & calls."
+                            "Tap any preset to switch immediately — selected launch chime plays automatically whenever you open the app."
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = CordlyTextSecondary
                     )
                 }
-                if (!hasNeoPlus) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = onOpenShopForRanks,
-                        colors = ButtonDefaults.buttonColors(containerColor = CordlyAmber, contentColor = Color.Black),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.height(40.dp)
-                    ) {
-                        Text(
-                            text = if (isArabicLocale) "ترقية" else "Unlock",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+            }
+        }
+
+        // Auto-rotate launch sound toggle
+        Surface(
+            color = CordlyElevatedSurface,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, if (autoRotateStartup) CordlyCyan else CordlyDivider),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val next = !autoRotateStartup
+                        autoRotateStartup = AppAppearanceStore.saveAutoRotateStartupSound(context, next)
                     }
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PowerSettingsNew,
+                    contentDescription = null,
+                    tint = if (autoRotateStartup) CordlyCyan else CordlyTextSecondary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isArabicLocale) "تغيير صوت فتح التطبيق عند كل دخول" else "Rotate launch sound on every app open",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = CordlyTextPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (isArabicLocale) {
+                            "عند التفعيل، يتبدل صوت الفتح تلقائياً إلى النغمة التالية في كل مرة تفتح فيها التطبيق."
+                        } else {
+                            "When enabled, cycles to a new launch sound every time you open the app."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = CordlyTextSecondary
+                    )
                 }
+                androidx.compose.material3.Switch(
+                    checked = autoRotateStartup,
+                    onCheckedChange = { checked ->
+                        autoRotateStartup = AppAppearanceStore.saveAutoRotateStartupSound(context, checked)
+                    },
+                    modifier = Modifier.testTag("toggle_auto_rotate_startup_sound")
+                )
             }
         }
 
@@ -151,18 +188,14 @@ internal fun SettingsSoundsSection(
             subtitle = if (isArabicLocale) "10 مؤثرات عند فتح التطبيق والدخول" else "10 studio chimes played when opening neov chat",
             icon = Icons.Rounded.PowerSettingsNew,
             iconTint = CordlyCyan,
-            badgeText = badge,
+            badgeText = null,
             presets = SoundPresetCatalog.startupPresets,
             selectedId = soundPrefs.startupId,
-            hasNeoPlus = hasNeoPlus,
+            hasNeoPlus = true,
             isArabicLocale = isArabicLocale,
             onSelectPreset = { preset ->
                 SoundEffectsManager.previewPreset(preset)
-                if (hasNeoPlus) {
-                    onUpdateSoundPrefs(soundPrefs.copy(startupId = preset.id))
-                } else {
-                    onOpenShopForRanks()
-                }
+                onUpdateSoundPrefs(soundPrefs.copy(startupId = preset.id))
             },
             onPreviewPreset = { preset -> SoundEffectsManager.previewPreset(preset) }
         )
@@ -173,18 +206,14 @@ internal fun SettingsSoundsSection(
             subtitle = if (isArabicLocale) "10 نغمات رنين عندما يتصل بك شخص" else "10 ringtones played when friends call you",
             icon = Icons.Rounded.NotificationsActive,
             iconTint = CordlyAmber,
-            badgeText = badge,
+            badgeText = null,
             presets = SoundPresetCatalog.ringtonePresets,
             selectedId = soundPrefs.ringtoneId,
-            hasNeoPlus = hasNeoPlus,
+            hasNeoPlus = true,
             isArabicLocale = isArabicLocale,
             onSelectPreset = { preset ->
                 SoundEffectsManager.previewPreset(preset)
-                if (hasNeoPlus) {
-                    onUpdateSoundPrefs(soundPrefs.copy(ringtoneId = preset.id))
-                } else {
-                    onOpenShopForRanks()
-                }
+                onUpdateSoundPrefs(soundPrefs.copy(ringtoneId = preset.id))
             },
             onPreviewPreset = { preset -> SoundEffectsManager.previewPreset(preset) }
         )
@@ -195,18 +224,14 @@ internal fun SettingsSoundsSection(
             subtitle = if (isArabicLocale) "10 مؤثرات عند إرسال واستلام الرسائل" else "10 effects for incoming & sent chat messages",
             icon = Icons.Rounded.MarkChatUnread,
             iconTint = CordlyBlurple,
-            badgeText = badge,
+            badgeText = null,
             presets = SoundPresetCatalog.messagePresets,
             selectedId = soundPrefs.messageId,
-            hasNeoPlus = hasNeoPlus,
+            hasNeoPlus = true,
             isArabicLocale = isArabicLocale,
             onSelectPreset = { preset ->
                 SoundEffectsManager.previewPreset(preset)
-                if (hasNeoPlus) {
-                    onUpdateSoundPrefs(soundPrefs.copy(messageId = preset.id))
-                } else {
-                    onOpenShopForRanks()
-                }
+                onUpdateSoundPrefs(soundPrefs.copy(messageId = preset.id))
             },
             onPreviewPreset = { preset -> SoundEffectsManager.previewPreset(preset) }
         )
@@ -217,43 +242,38 @@ internal fun SettingsSoundsSection(
             subtitle = if (isArabicLocale) "10 مؤثرات لبدء وإنهاء المكالمة والتنبيهات" else "10 effects for call join, hangup & alerts",
             icon = Icons.Rounded.Call,
             iconTint = CordlyEmerald,
-            badgeText = badge,
+            badgeText = null,
             presets = SoundPresetCatalog.callEventPresets,
             selectedId = soundPrefs.callEventId,
-            hasNeoPlus = hasNeoPlus,
+            hasNeoPlus = true,
             isArabicLocale = isArabicLocale,
             onSelectPreset = { preset ->
                 SoundEffectsManager.previewPreset(preset)
-                if (hasNeoPlus) {
-                    onUpdateSoundPrefs(soundPrefs.copy(callEventId = preset.id))
-                } else {
-                    onOpenShopForRanks()
-                }
+                onUpdateSoundPrefs(soundPrefs.copy(callEventId = preset.id))
             },
             onPreviewPreset = { preset -> SoundEffectsManager.previewPreset(preset) }
         )
 
-        if (hasNeoPlus) {
-            OutlinedButton(
-                onClick = {
-                    val defaults = UserSoundPrefs()
-                    onUpdateSoundPrefs(defaults)
-                    SoundEffectsManager.previewPreset(SoundPresetCatalog.findStartup(defaults.startupId))
-                },
-                border = BorderStroke(1.dp, CordlyDivider),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("reset_sounds_button")
-            ) {
-                Icon(Icons.Rounded.Refresh, contentDescription = null, tint = CordlyTextSecondary, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (isArabicLocale) "استعادة الأصوات الافتراضية" else "Reset All Sounds to Default",
-                    color = CordlyTextPrimary
-                )
-            }
+        OutlinedButton(
+            onClick = {
+                val defaults = UserSoundPrefs()
+                autoRotateStartup = AppAppearanceStore.saveAutoRotateStartupSound(context, false)
+                onUpdateSoundPrefs(defaults)
+                SoundEffectsManager.previewPreset(SoundPresetCatalog.findStartup(defaults.startupId))
+            },
+            border = BorderStroke(1.dp, CordlyDivider),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .testTag("reset_sounds_button")
+        ) {
+            Icon(Icons.Rounded.Refresh, contentDescription = null, tint = CordlyTextSecondary, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (isArabicLocale) "استعادة الأصوات الافتراضية" else "Reset All Sounds to Default",
+                color = CordlyTextPrimary
+            )
         }
     }
 }

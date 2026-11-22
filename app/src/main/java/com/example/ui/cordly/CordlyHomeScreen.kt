@@ -38,6 +38,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material.icons.rounded.Add
@@ -55,6 +57,7 @@ import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PersonRemove
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ShoppingBag
@@ -67,6 +70,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -99,6 +104,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -153,6 +159,7 @@ fun CordlyHomeScreen(
     val directMessagesState by viewModel.directMessages.collectAsStateWithLifecycle()
     val serverMessagesState by viewModel.serverMessages.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
+    val isArabic = AppLanguageManager.resolveEffectiveCode(LocalSelectedLanguageCode.current).startsWith("ar")
     val profileViewerTarget by viewModel.profileViewerTarget.collectAsStateWithLifecycle()
     val viewedPublicProfileState by viewModel.viewedPublicProfile.collectAsStateWithLifecycle()
     val activeCalls by viewModel.activeCalls.collectAsStateWithLifecycle()
@@ -166,6 +173,7 @@ fun CordlyHomeScreen(
     val customQuests by viewModel.customQuests.collectAsStateWithLifecycle()
     val developerTickets by viewModel.developerTickets.collectAsStateWithLifecycle()
     val welcomeBanner by viewModel.welcomeBanner.collectAsStateWithLifecycle()
+    val secretPromoCelebration by viewModel.secretPromoCelebration.collectAsStateWithLifecycle()
 
     var isCallMinimized by remember { mutableStateOf(false) }
     var hasSeenJoinedCall by remember(joinedCallId) { mutableStateOf(false) }
@@ -278,6 +286,12 @@ fun CordlyHomeScreen(
     var showNeovAiSheet by remember { mutableStateOf(false) }
     var showNeovAiLiveCall by remember { mutableStateOf(false) }
 
+    LaunchedEffect(secretPromoCelebration) {
+        if (secretPromoCelebration != null) {
+            showAddFriendDialog = false
+        }
+    }
+
     LaunchedEffect(snackbarMessage) {
         val msg = snackbarMessage
         if (msg != null) {
@@ -290,10 +304,9 @@ fun CordlyHomeScreen(
     val effectiveRank = remember(ownProfile?.rank, ownProfile?.rankExpiresAtMs) {
         CordlyRepository.effectiveRank(ownProfile)
     }
-    LaunchedEffect(effectiveRank, soundPrefs) {
-        val neoPlusSoundsAllowed = effectiveRank == CordlyRepository.RANK_NEO_PLUS
-        AppAppearanceStore.saveNeoPlusSoundsEnabled(context, neoPlusSoundsAllowed)
-        SoundEffectsManager.updatePreferences(soundPrefs, neoPlusSoundsAllowed)
+    LaunchedEffect(soundPrefs) {
+        AppAppearanceStore.saveNeoPlusSoundsEnabled(context, true)
+        SoundEffectsManager.updatePreferences(soundPrefs, true)
     }
     val friendships = (friendshipsState as? UiState.Success)?.data.orEmpty()
     val acceptedFriends = remember(friendships) {
@@ -434,6 +447,16 @@ fun CordlyHomeScreen(
                         activeCalls = activeCalls,
                         onSetHomeTab = { viewModel.setHomeTab(it) },
                         onAddFriendClick = { showAddFriendDialog = true },
+                        onQuickFriendOrCodeSubmit = { raw ->
+                            val trimmed = raw.trim()
+                            if (trimmed == CordlyRepository.SECRET_PROMO_CODE_12340) {
+                                viewModel.redeemSecretPromoCode(trimmed)
+                            } else if (trimmed.isNotBlank()) {
+                                viewModel.searchFriend(trimmed)
+                                showAddFriendDialog = true
+                            }
+                        },
+                        isArabic = isArabic,
                         onCopyCode = { code ->
                             clipboardManager.setText(AnnotatedString(code))
                             scope.launch { snackbarHostState.showSnackbar("${strings.copiedToast}: $code") }
@@ -733,7 +756,8 @@ fun CordlyHomeScreen(
         val showFloatingNeovOrb = !showNeovAiSheet &&
             !showNeovAiLiveCall &&
             joinedCall == null &&
-            welcomeBanner !is WelcomeBootstrapState.NewUserWelcome
+            welcomeBanner !is WelcomeBootstrapState.NewUserWelcome &&
+            secretPromoCelebration == null
         if (showFloatingNeovOrb) {
             FloatingNeovAiOrbButton(
                 onClick = { showNeovAiSheet = true },
@@ -755,6 +779,22 @@ fun CordlyHomeScreen(
                 NewAccountWelcomeOverlay(
                     displayName = newUserState.displayName,
                     onDismiss = { viewModel.dismissWelcomeBanner() }
+                )
+            }
+        }
+
+        // Legendary 8,000 P E Y Secret Promo Code Celebration Overlay
+        AnimatedVisibility(
+            visible = secretPromoCelebration != null,
+            enter = fadeIn(animationSpec = tween(240)),
+            exit = fadeOut(animationSpec = tween(280))
+        ) {
+            val promoResult = secretPromoCelebration
+            if (promoResult != null) {
+                SecretCodeCelebrationOverlay(
+                    result = promoResult,
+                    isArabic = isArabic,
+                    onDismiss = { viewModel.dismissSecretPromoCelebration() }
                 )
             }
         }
@@ -885,7 +925,7 @@ fun CordlyHomeScreen(
                 soundPrefs = AppAppearanceStore.saveSoundPrefs(context, nextSounds)
                 SoundEffectsManager.updatePreferences(
                     prefs = soundPrefs,
-                    allowedForNeoPlus = effectiveRank == CordlyRepository.RANK_NEO_PLUS
+                    allowedForNeoPlus = true
                 )
             },
             onPreviewOwnProfile = {
@@ -1139,6 +1179,8 @@ private fun WorkspaceSidebar(
     activeCalls: List<CallSession>,
     onSetHomeTab: (Int) -> Unit,
     onAddFriendClick: () -> Unit,
+    onQuickFriendOrCodeSubmit: (String) -> Unit,
+    isArabic: Boolean,
     onCopyCode: (String) -> Unit,
     onAcceptRequest: (Friendship) -> Unit,
     onDeclineRequest: (Friendship) -> Unit,
@@ -1179,8 +1221,10 @@ private fun WorkspaceSidebar(
                         homeTab = homeTab,
                         friendshipsState = friendshipsState,
                         conversationsState = conversationsState,
+                        isArabic = isArabic,
                         onSetHomeTab = onSetHomeTab,
                         onAddFriendClick = onAddFriendClick,
+                        onQuickFriendOrCodeSubmit = onQuickFriendOrCodeSubmit,
                         onOpenShopClick = onOpenShopClick,
                         onCopyCode = onCopyCode,
                         onAcceptRequest = onAcceptRequest,
@@ -1252,8 +1296,10 @@ private fun HomeHubContent(
     homeTab: Int,
     friendshipsState: UiState<List<Friendship>>,
     conversationsState: UiState<List<Conversation>>,
+    isArabic: Boolean,
     onSetHomeTab: (Int) -> Unit,
     onAddFriendClick: () -> Unit,
+    onQuickFriendOrCodeSubmit: (String) -> Unit,
     onOpenShopClick: () -> Unit,
     onCopyCode: (String) -> Unit,
     onAcceptRequest: (Friendship) -> Unit,
@@ -1520,6 +1566,77 @@ private fun HomeHubContent(
                 }
             }
         } else {
+            var quickCodeInput by rememberSaveable { mutableStateOf("") }
+            Surface(
+                color = CordlyCardSurface.copy(alpha = 0.86f),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, CordlyBlurple.copy(alpha = 0.4f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    OutlinedTextField(
+                        value = quickCodeInput,
+                        onValueChange = { quickCodeInput = it },
+                        placeholder = {
+                            Text(
+                                text = if (isArabic) "أدخل كود الصديق أو الكود السري..." else "Friend code or secret code...",
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                val trimmed = quickCodeInput.trim()
+                                if (trimmed.isNotEmpty()) {
+                                    onQuickFriendOrCodeSubmit(trimmed)
+                                    quickCodeInput = ""
+                                }
+                            }
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = CordlyCyan,
+                            unfocusedBorderColor = CordlyDivider,
+                            focusedTextColor = CordlyTextPrimary,
+                            unfocusedTextColor = CordlyTextPrimary
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("friends_quick_code_input")
+                    )
+                    Button(
+                        onClick = {
+                            val trimmed = quickCodeInput.trim()
+                            if (trimmed.isNotEmpty()) {
+                                onQuickFriendOrCodeSubmit(trimmed)
+                                quickCodeInput = ""
+                            }
+                        },
+                        enabled = quickCodeInput.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = CordlyBlurple),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("friends_quick_code_submit")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = if (isArabic) "تفعيل / بحث" else "Search / Redeem",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
             when (friendshipsState) {
                 is UiState.Loading -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

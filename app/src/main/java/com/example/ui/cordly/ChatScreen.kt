@@ -342,10 +342,14 @@ fun ChatScreen(
     }
 
     fun launchRecordChatVideo() {
-        val outFile = File(context.cacheDir, "chat_cam_vid_${System.currentTimeMillis()}.mp4")
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile)
-        pendingRecordVideoUri = uri
-        recordVideoLauncher.launch(uri)
+        try {
+            val outFile = File(context.cacheDir, "chat_cam_vid_${System.currentTimeMillis()}.mp4")
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile)
+            pendingRecordVideoUri = uri
+            recordVideoLauncher.launch(uri)
+        } catch (_: Exception) {
+            onStatusToast(strings.permissionCallRequired)
+        }
     }
 
     val videoRecordPermsLauncher = rememberLauncherForActivityResult(
@@ -1779,6 +1783,7 @@ private fun ChatVideoFullscreenDialog(
     val strings = LocalAppStrings.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var mediaPlayer by remember(videoFile) { mutableStateOf<MediaPlayer?>(null) }
+    var videoSurface by remember(videoFile) { mutableStateOf<Surface?>(null) }
     var isPlaying by remember { mutableStateOf(true) }
     var progressFraction by remember { mutableFloatStateOf(0f) }
 
@@ -1792,6 +1797,14 @@ private fun ChatVideoFullscreenDialog(
             }
             try {
                 mp.release()
+            } catch (_: Exception) {
+            }
+        }
+        val surf = videoSurface
+        videoSurface = null
+        if (surf != null) {
+            try {
+                surf.release()
             } catch (_: Exception) {
             }
         }
@@ -1858,13 +1871,16 @@ private fun ChatVideoFullscreenDialog(
                 factory = { ctx ->
                     TextureView(ctx).apply {
                         id = R.id.chat_video_texture_view
+                        isOpaque = true
                         surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
                                 releaseActivePlayer()
                                 val player = MediaPlayer()
+                                val surf = Surface(surface)
                                 mediaPlayer = player
+                                videoSurface = surf
                                 try {
-                                    player.setSurface(Surface(surface))
+                                    player.setSurface(surf)
                                     player.setDataSource(videoFile.absolutePath)
                                     player.isLooping = true
                                     player.setOnPreparedListener { mp ->

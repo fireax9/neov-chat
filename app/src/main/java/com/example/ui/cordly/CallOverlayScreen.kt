@@ -91,6 +91,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.model.CallSession
@@ -108,12 +109,25 @@ import com.example.ui.theme.CordlyEmerald
 import com.example.ui.theme.CordlySurfaceDark
 import com.example.ui.theme.CordlyTextPrimary
 import com.example.ui.theme.CordlyTextSecondary
+import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.lifecycle.Observer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import org.webrtc.EglBase
-import org.webrtc.RendererCommon
-import org.webrtc.SurfaceViewRenderer
+import org.webrtc.VideoFrame
+import org.webrtc.VideoSink
 import org.webrtc.VideoTrack
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class InviteableFriend(
     val uid: String,
@@ -261,13 +275,20 @@ fun ActiveCallOverlayDialog(
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     val isUltraOrPlus = currentUserRank == CordlyRepository.RANK_ULTRA || currentUserRank == CordlyRepository.RANK_NEO_PLUS
     val isNeoPlus = currentUserRank == CordlyRepository.RANK_NEO_PLUS
 
+    val isCaller = call.callerId == currentUserId
     var isMuted by remember(call.id) { mutableStateOf(false) }
     var isSpeakerOn by remember(call.id) { mutableStateOf(true) }
-    var isVideoEnabled by remember(call.id) { mutableStateOf(call.callType == "video") }
+    var isVideoEnabled by remember(call.id) {
+        mutableStateOf(
+            call.callType == "video" ||
+                (if (isCaller) call.callerVideoOn else call.calleeVideoOn)
+        )
+    }
     var elapsedSeconds by remember(call.id) { mutableLongStateOf(0L) }
 
     var selectedQuality by remember(call.id) { mutableStateOf(VideoQualityPreset.fromId(call.videoQuality)) }
@@ -338,6 +359,9 @@ fun ActiveCallOverlayDialog(
     val remoteTracks by webRtc.remoteVideoTracks.collectAsStateWithLifecycle()
     val isFrontCam by webRtc.isUsingFrontCamera.collectAsStateWithLifecycle()
     val connectedPeers by webRtc.connectedPeerCount.collectAsStateWithLifecycle()
+    val cameraError by webRtc.cameraError.collectAsStateWithLifecycle()
+    val usingCameraXPreview by webRtc.usingCameraXPreview.collectAsStateWithLifecycle()
+    val localFrameProduced by webRtc.localFrameProduced.collectAsStateWithLifecycle()
 
     // Configure speakerphone routing without opening dual AudioRecord/AudioTrack (WebRTC owns hardware audio).
     DisposableEffect(call.id, isSpeakerOn) {
@@ -356,13 +380,14 @@ fun ActiveCallOverlayDialog(
     }
 
     // Start local mic & camera capture first so initial SDP offers/answers already carry active senders.
-    LaunchedEffect(hasAudioPermission, hasCameraPermission, isVideoEnabled, isMuted, selectedQuality) {
+    LaunchedEffect(hasAudioPermission, hasCameraPermission, isVideoEnabled, isMuted, selectedQuality, lifecycleOwner) {
         webRtc.startOrUpdateLocalMedia(
             hasAudioPermission = hasAudioPermission,
             hasCameraPermission = hasCameraPermission,
             videoEnabled = isVideoEnabled,
             muted = isMuted,
-            preset = selectedQuality
+            preset = selectedQuality,
+            lifecycleOwner = lifecycleOwner
         )
     }
 
@@ -423,7 +448,6 @@ fun ActiveCallOverlayDialog(
 
     val remoteStreams = streams.filter { it.senderId != currentUserId }
 
-    val isCaller = call.callerId == currentUserId
     val peerName = when {
         call.participantIds.size > 2 -> "${call.calleeName} (${call.participantIds.size})"
         call.targetType == "server" -> call.calleeName
@@ -576,7 +600,8 @@ fun ActiveCallOverlayDialog(
                         .padding(vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    val firstRemote = remoteStreams.firstOrNull()
+                    val activeVideoRemote = remoteStreams.firstOrNull { it.videoEnabled && remoteTracks.containsKey(it.senderId) }
+                    val firstRemote = activeVideoRemote ?: remoteStreams.firstOrNull()
                     val remoteTrack = firstRemote?.senderId?.let { remoteTracks[it] }
                         ?: remoteTracks.values.firstOrNull()
                     val remoteCallDocVideoOn = if (call.participantIds.size <= 2) {
@@ -585,19 +610,29 @@ fun ActiveCallOverlayDialog(
                         false
                     }
                     var remoteFrameRendered by remember(call.id, remoteTrack) { mutableStateOf(false) }
-                    val showRemoteVideo = remoteTrack != null && (
-                        firstRemote?.videoEnabled == true ||
-                            remoteCallDocVideoOn ||
-                            (call.callType == "video" && firstRemote == null)
+                    var localPreviewStreaming by remember(call.id) { mutableStateOf(false) }
+                    val localFrameRendered = localPreviewStreaming || localFrameProduced
+                    val activeRemoteEntries = remoteTracks.entries.filter { (peerId, _) ->
+                        val stream = remoteStreams.firstOrNull { it.senderId == peerId }
+                        stream == null || stream.videoEnabled || call.callType == "video"
+                    }
+                    val peerVideoExplicitlyOff = remoteStreams.isNotEmpty() &&
+                        remoteStreams.none { it.videoEnabled } &&
+                        !remoteCallDocVideoOn &&
+                        call.callType != "video"
+                    val showRemoteVideo = activeRemoteEntries.isNotEmpty() && (
+                        remoteFrameRendered ||
+                            !peerVideoExplicitlyOff
                         )
                     val showVideoLayout = (isVideoEnabled && hasCameraPermission) || showRemoteVideo
+                    val isArabic = AppLanguageManager.resolveEffectiveCode(LocalSelectedLanguageCode.current).startsWith("ar")
 
                     if (showVideoLayout) {
                         Column(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            // Remote WebRTC P2P video stage — SCALE_ASPECT_FIT so peer image NEVER stretches!
+                            // Remote WebRTC P2P video stage (supports 1-on-1 & multi-participant group video calls)
                             Surface(
                                 color = Color.Black,
                                 shape = RoundedCornerShape(22.dp),
@@ -610,17 +645,62 @@ fun ActiveCallOverlayDialog(
                                     .fillMaxWidth()
                             ) {
                                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                    if (showRemoteVideo) {
-                                        WebRtcVideoSurface(
+                                    if (showRemoteVideo && activeRemoteEntries.size > 1) {
+                                        LazyVerticalGrid(
+                                            columns = GridCells.Fixed(2),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(6.dp)
+                                        ) {
+                                            items(activeRemoteEntries, key = { it.key }) { (peerId, track) ->
+                                                val streamMeta = remoteStreams.firstOrNull { it.senderId == peerId }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(175.dp)
+                                                        .clip(RoundedCornerShape(14.dp))
+                                                        .background(Color(0xFF0A0A0F))
+                                                ) {
+                                                    BitmapWebRtcVideoSurface(
+                                                        track = track,
+                                                        mirror = false,
+                                                        faceFilter = CallFaceFilter.fromId(streamMeta?.faceFilter),
+                                                        onFirstFrameRendered = { remoteFrameRendered = true },
+                                                        modifier = Modifier.fillMaxSize()
+                                                    )
+                                                    if (streamMeta != null) {
+                                                        Surface(
+                                                            color = Color.Black.copy(alpha = 0.65f),
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            modifier = Modifier
+                                                                .align(Alignment.BottomStart)
+                                                                .padding(6.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = streamMeta.senderName,
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = Color.White,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis,
+                                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else if (showRemoteVideo) {
+                                        BitmapWebRtcVideoSurface(
                                             track = remoteTrack,
-                                            eglContext = webRtc.eglBase.eglBaseContext,
                                             mirror = false,
-                                            isOverlay = false,
                                             faceFilter = CallFaceFilter.fromId(firstRemote?.faceFilter),
                                             onFirstFrameRendered = { remoteFrameRendered = true },
                                             modifier = Modifier.fillMaxSize()
                                         )
-                                    } else {
+                                    }
+                                    if (!showRemoteVideo || (!remoteFrameRendered && activeRemoteEntries.size <= 1)) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                             UserAvatar(
                                                 displayName = firstRemote?.senderName ?: peerName,
@@ -634,9 +714,13 @@ fun ActiveCallOverlayDialog(
                                                 style = MaterialTheme.typography.titleMedium,
                                                 color = CordlyTextPrimary
                                             )
-                                            if (call.status == "ringing") {
+                                            if (call.status == "ringing" || showRemoteVideo) {
                                                 Text(
-                                                    text = strings.callingStatus,
+                                                    text = if (showRemoteVideo) {
+                                                        if (isArabic) "جاري استقبال الكاميرا..." else "Connecting video..."
+                                                    } else {
+                                                        strings.callingStatus
+                                                    },
                                                     style = MaterialTheme.typography.labelMedium,
                                                     color = CordlyCyan
                                                 )
@@ -704,27 +788,83 @@ fun ActiveCallOverlayDialog(
                                 }
                             }
 
-                            // Self WebRTC live preview with SCALE_ASPECT_FIT (no stretching!) + Snapchat Face Filter overlay
+                            // Self live camera preview (CameraX PreviewView COMPATIBLE primary path + Bitmap fallback)
                             if (isVideoEnabled && hasCameraPermission) {
                                 Surface(
                                     color = Color.Black,
                                     shape = RoundedCornerShape(20.dp),
                                     border = BorderStroke(
                                         width = 1.5.dp,
-                                        color = if (!isMuted && connectedPeers > 0) CordlyEmerald else CordlyBlurple
+                                        color = when {
+                                            cameraError != null -> CordlyCrimson
+                                            !isMuted && connectedPeers > 0 -> CordlyEmerald
+                                            else -> CordlyBlurple
+                                        }
                                     ),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(175.dp)
+                                        .height(185.dp)
                                 ) {
-                                    WebRtcVideoSurface(
-                                        track = localTrack,
-                                        eglContext = webRtc.eglBase.eglBaseContext,
-                                        mirror = isFrontCam,
-                                        isOverlay = true,
-                                        faceFilter = selectedFaceFilter,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                        if (usingCameraXPreview || cameraError == null) {
+                                            LocalCameraPreviewBox(
+                                                webRtc = webRtc,
+                                                lifecycleOwner = lifecycleOwner,
+                                                faceFilter = selectedFaceFilter,
+                                                onStreamingChanged = { streaming ->
+                                                    localPreviewStreaming = streaming
+                                                },
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            BitmapWebRtcVideoSurface(
+                                                track = localTrack,
+                                                mirror = isFrontCam,
+                                                faceFilter = selectedFaceFilter,
+                                                onFirstFrameRendered = { localPreviewStreaming = true },
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        }
+                                        if (!localFrameRendered) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier.padding(12.dp)
+                                            ) {
+                                                if (cameraError != null) {
+                                                    Text(
+                                                        text = if (isArabic) "تعذر تشغيل الكاميرا" else "Camera failed to start",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        color = CordlyCrimson,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Button(
+                                                        onClick = { webRtc.retryLocalCamera(hasCameraPermission, lifecycleOwner) },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = CordlyBlurple),
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                                        modifier = Modifier.testTag("retry_call_camera_button")
+                                                    ) {
+                                                        Text(
+                                                            text = if (isArabic) "إعادة تشغيل الكاميرا" else "Retry Camera",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = Color.White
+                                                        )
+                                                    }
+                                                } else {
+                                                    CircularProgressIndicator(
+                                                        color = CordlyCyan,
+                                                        strokeWidth = 2.dp,
+                                                        modifier = Modifier.size(22.dp)
+                                                    )
+                                                    Text(
+                                                        text = if (isArabic) "جاري تشغيل الكاميرا..." else "Starting camera...",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = CordlyTextSecondary
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1001,7 +1141,7 @@ fun ActiveCallOverlayDialog(
                                     if (next && !hasCameraPermission) {
                                         permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
                                     }
-                                    webRtc.setVideoEnabled(next, hasCameraPermission)
+                                    webRtc.setVideoEnabled(next, hasCameraPermission, lifecycleOwner)
                                     onToggleVideo(next)
                                 }
                             )
@@ -1231,75 +1371,39 @@ private fun CallControlPill(
 }
 
 @Composable
-private fun WebRtcVideoSurface(
-    track: VideoTrack?,
-    eglContext: EglBase.Context,
-    mirror: Boolean,
-    isOverlay: Boolean,
+private fun LocalCameraPreviewBox(
+    webRtc: WebRtcCallManager,
+    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
     faceFilter: CallFaceFilter,
-    onFirstFrameRendered: () -> Unit = {},
+    onStreamingChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val latestOnFirstFrame by rememberUpdatedState(onFirstFrameRendered)
-    val renderer = remember(eglContext, isOverlay) {
-        SurfaceViewRenderer(context).apply {
-            id = if (isOverlay) R.id.webrtc_local_renderer else R.id.webrtc_remote_renderer
-            init(
-                eglContext,
-                object : RendererCommon.RendererEvents {
-                    override fun onFirstFrameRendered() {
-                        latestOnFirstFrame()
-                    }
-
-                    override fun onFrameResolutionChanged(
-                        videoWidth: Int,
-                        videoHeight: Int,
-                        rotation: Int
-                    ) {
-                    }
-                }
-            )
-            setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-            setEnableHardwareScaler(true)
-            setZOrderMediaOverlay(isOverlay)
+    val latestOnStreaming by rememberUpdatedState(onStreamingChanged)
+    val previewView = remember(context) {
+        PreviewView(context).apply {
+            id = R.id.webrtc_local_renderer
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            scaleType = PreviewView.ScaleType.FILL_CENTER
         }
     }
 
-    LaunchedEffect(renderer, mirror) {
-        renderer.setMirror(mirror)
-    }
-
-    DisposableEffect(renderer, track) {
-        if (track != null) {
-            try {
-                track.addSink(renderer)
-            } catch (_: Exception) {
-            }
+    DisposableEffect(previewView, lifecycleOwner) {
+        val observer = Observer<PreviewView.StreamState> { state ->
+            latestOnStreaming(state == PreviewView.StreamState.STREAMING)
         }
+        previewView.previewStreamState.observe(lifecycleOwner, observer)
+        webRtc.setLocalPreviewSurfaceProvider(previewView.surfaceProvider, lifecycleOwner)
         onDispose {
-            if (track != null) {
-                try {
-                    track.removeSink(renderer)
-                } catch (_: Exception) {
-                }
-            }
+            previewView.previewStreamState.removeObserver(observer)
+            webRtc.setLocalPreviewSurfaceProvider(null, null)
+            latestOnStreaming(false)
         }
     }
 
-    DisposableEffect(renderer) {
-        onDispose {
-            try {
-                renderer.clearImage()
-                renderer.release()
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    Box(modifier = modifier) {
+    Box(modifier = modifier.background(Color.Black)) {
         AndroidView(
-            factory = { renderer },
+            factory = { previewView },
             modifier = Modifier.fillMaxSize()
         )
         if (faceFilter != CallFaceFilter.NONE) {
@@ -1311,6 +1415,215 @@ private fun WebRtcVideoSurface(
                         size.height,
                         faceFilter
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BitmapWebRtcVideoSurface(
+    track: VideoTrack?,
+    mirror: Boolean,
+    faceFilter: CallFaceFilter,
+    onFirstFrameRendered: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val latestOnFirstFrame by rememberUpdatedState(onFirstFrameRendered)
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val convertExecutor = remember { Executors.newSingleThreadExecutor() }
+    var renderedBitmap by remember(track) { mutableStateOf<Bitmap?>(null) }
+    var frameTick by remember(track) { mutableIntStateOf(0) }
+
+    DisposableEffect(convertExecutor) {
+        onDispose {
+            convertExecutor.shutdownNow()
+        }
+    }
+
+    DisposableEffect(track) {
+        val disposed = AtomicBoolean(false)
+        val converting = AtomicBoolean(false)
+        var reportedFirst = false
+        var bmpA: Bitmap? = null
+        var bmpB: Bitmap? = null
+        var useSlotA = true
+        var pixelBuf = IntArray(0)
+
+        val sink = VideoSink { frame: VideoFrame ->
+            if (disposed.get() || !converting.compareAndSet(false, true)) {
+                return@VideoSink
+            }
+            frame.retain()
+            val rot = frame.rotation
+            try {
+                convertExecutor.execute {
+                    try {
+                        if (disposed.get()) return@execute
+                        val i420 = frame.buffer.toI420() ?: return@execute
+                        try {
+                            val srcW = i420.width
+                            val srcH = i420.height
+                            if (srcW <= 0 || srcH <= 0) return@execute
+
+                            val step = if (maxOf(srcW, srcH) > 960) 2 else 1
+                            val sampledW = (srcW + step - 1) / step
+                            val sampledH = (srcH + step - 1) / step
+                            val normRot = ((rot % 360) + 360) % 360
+                            val outW = if (normRot == 90 || normRot == 270) sampledH else sampledW
+                            val outH = if (normRot == 90 || normRot == 270) sampledW else sampledH
+                            val totalPx = outW * outH
+                            if (pixelBuf.size < totalPx) {
+                                pixelBuf = IntArray(totalPx)
+                            }
+
+                            val dataY = i420.dataY
+                            val dataU = i420.dataU
+                            val dataV = i420.dataV
+                            val strideY = i420.strideY
+                            val strideU = i420.strideU
+                            val strideV = i420.strideV
+
+                            for (dy in 0 until sampledH) {
+                                val sy = dy * step
+                                val yRow = sy * strideY
+                                val uvRowU = (sy shr 1) * strideU
+                                val uvRowV = (sy shr 1) * strideV
+                                for (dx in 0 until sampledW) {
+                                    val sx = dx * step
+                                    val yVal = dataY.get(yRow + sx).toInt() and 0xFF
+                                    val uvCol = sx shr 1
+                                    val uVal = (dataU.get(uvRowU + uvCol).toInt() and 0xFF) - 128
+                                    val vVal = (dataV.get(uvRowV + uvCol).toInt() and 0xFF) - 128
+
+                                    val c = (yVal - 16).coerceAtLeast(0)
+                                    val r = ((298 * c + 409 * vVal + 128) shr 8).coerceIn(0, 255)
+                                    val g = ((298 * c - 100 * uVal - 208 * vVal + 128) shr 8).coerceIn(0, 255)
+                                    val b = ((298 * c + 516 * uVal + 128) shr 8).coerceIn(0, 255)
+                                    val argb = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+
+                                    val ox: Int
+                                    val oy: Int
+                                    when (normRot) {
+                                        90 -> {
+                                            ox = sampledH - 1 - dy
+                                            oy = dx
+                                        }
+                                        180 -> {
+                                            ox = sampledW - 1 - dx
+                                            oy = sampledH - 1 - dy
+                                        }
+                                        270 -> {
+                                            ox = dy
+                                            oy = sampledW - 1 - dx
+                                        }
+                                        else -> {
+                                            ox = dx
+                                            oy = dy
+                                        }
+                                    }
+                                    pixelBuf[oy * outW + ox] = argb
+                                }
+                            }
+
+                            var target = if (useSlotA) bmpA else bmpB
+                            if (target == null || target.isRecycled || target.width != outW || target.height != outH) {
+                                target = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+                                if (useSlotA) bmpA = target else bmpB = target
+                            }
+                            target.setPixels(pixelBuf, 0, outW, 0, 0, outW, outH)
+                            useSlotA = !useSlotA
+
+                            if (!disposed.get()) {
+                                val firstNow = !reportedFirst
+                                reportedFirst = true
+                                val nextBmp = target
+                                mainHandler.post {
+                                    if (!disposed.get()) {
+                                        renderedBitmap = nextBmp
+                                        frameTick++
+                                        if (firstNow) latestOnFirstFrame()
+                                    }
+                                }
+                            }
+                        } finally {
+                            i420.release()
+                        }
+                    } catch (_: Throwable) {
+                    } finally {
+                        frame.release()
+                        converting.set(false)
+                    }
+                }
+            } catch (_: Throwable) {
+                frame.release()
+                converting.set(false)
+            }
+        }
+
+        if (track != null) {
+            try {
+                track.addSink(sink)
+            } catch (_: Exception) {
+            }
+        }
+        onDispose {
+            disposed.set(true)
+            if (track != null) {
+                try {
+                    track.removeSink(sink)
+                } catch (_: Exception) {
+                }
+            }
+            renderedBitmap = null
+        }
+    }
+
+    BoxWithConstraints(
+        contentAlignment = Alignment.Center,
+        modifier = modifier.background(Color.Black)
+    ) {
+        val bmp = renderedBitmap
+        val tickRead = frameTick
+        if (bmp != null && !bmp.isRecycled && tickRead >= 0) {
+            val boxAspect = if (maxHeight > 0.dp) maxWidth / maxHeight else 1f
+            val bmpAspect = bmp.width.toFloat() / bmp.height.coerceAtLeast(1).toFloat()
+            val fittedModifier = if (bmpAspect > 0f && maxWidth > 0.dp && maxHeight > 0.dp) {
+                if (bmpAspect > boxAspect) {
+                    val w = maxWidth
+                    val h = (w / bmpAspect).coerceAtMost(maxHeight)
+                    Modifier
+                        .width(w)
+                        .height(h)
+                } else {
+                    val h = maxHeight
+                    val w = (h * bmpAspect).coerceAtMost(maxWidth)
+                    Modifier
+                        .width(w)
+                        .height(h)
+                }
+            } else {
+                Modifier.fillMaxSize()
+            }
+
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = "Call video feed",
+                contentScale = ContentScale.Fit,
+                modifier = fittedModifier.graphicsLayer {
+                    scaleX = if (mirror) -1f else 1f
+                }
+            )
+            if (faceFilter != CallFaceFilter.NONE) {
+                Canvas(modifier = fittedModifier) {
+                    drawIntoCanvas { canvas ->
+                        CallVideoFrameProcessor.drawFaceFilterOnCanvas(
+                            canvas.nativeCanvas,
+                            size.width,
+                            size.height,
+                            faceFilter
+                        )
+                    }
                 }
             }
         }

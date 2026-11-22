@@ -6,10 +6,18 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.view.Surface
 import android.view.TextureView
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -235,7 +243,7 @@ fun ProfileVideoBackgroundPlayer(
         factory = { ctx ->
             TextureView(ctx).apply {
                 id = R.id.profile_video_texture_view
-                isOpaque = false
+                isOpaque = true
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
                         startIfNeeded(this@apply, surface)
@@ -350,9 +358,63 @@ fun DiscordProfileSheetDialog(
     }
 
     val progressState = remember(videoSource) { mutableFloatStateOf(0f) }
+    val hasAnimeCardIntro = remember(equippedCardFrame) { isAnimeAnimatedCardFrame(equippedCardFrame) }
+    val introProgress = remember(uid, equippedCardFrame) { Animatable(0f) }
+    var introActive by remember(uid, equippedCardFrame) { mutableStateOf(hasAnimeCardIntro) }
+    var replayNonce by remember(uid, equippedCardFrame) { androidx.compose.runtime.mutableIntStateOf(0) }
+
+    val cardInfiniteTransition = rememberInfiniteTransition(label = "profileCardAura_$equippedCardFrame")
+    val animAngle by cardInfiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 10500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "cardAnimAngle"
+    )
+    val animPulse by cardInfiniteTransition.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 0.72f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 3200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "cardAnimPulse"
+    )
+
+    val entranceDurationMs = remember(equippedCardFrame) { cardEntranceDurationMs(equippedCardFrame) }
+    val entranceDurationBadge = remember(equippedCardFrame) { cardEntranceDurationBadge(equippedCardFrame) }
+
+    LaunchedEffect(uid, equippedCardFrame, equippedFrame, replayNonce) {
+        if (isAnimeAnimatedCardFrame(equippedCardFrame)) {
+            introActive = true
+            introProgress.snapTo(0f)
+            SoundEffectsManager.playCardEntranceSound(equippedCardFrame, context)
+            introProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = entranceDurationMs, easing = LinearEasing)
+            )
+            introActive = false
+        } else {
+            introActive = false
+            if (SoundEffectsManager.isAnimeSoundAvatar(equippedFrame)) {
+                SoundEffectsManager.playAvatarFrameSound(equippedFrame, context)
+            }
+        }
+    }
+
+    DisposableEffect(uid, equippedCardFrame, equippedFrame) {
+        onDispose {
+            SoundEffectsManager.stopCardEntranceSound()
+        }
+    }
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            SoundEffectsManager.stopCardEntranceSound()
+            onDismiss()
+        },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             decorFitsSystemWindows = false
@@ -360,34 +422,63 @@ fun DiscordProfileSheetDialog(
     ) {
         SanitizeDialogWindowIds()
         val hasCardFrame = cardFrameItem.id != "none"
+        val showCardAuraEffects = hasCardFrame || customThemeColor != null || videoSource != null
         val borderColors = when {
             hasCardFrame -> cardFrameItem.borderColors
             customThemeColor != null -> listOf(customThemeColor, customThemeColor.copy(alpha = 0.65f), CordlyCyan)
             videoSource != null -> effectItem.accentColors
             else -> listOf(CordlyDivider, CordlyBlurple)
         }
-        val activeCardAccent = if (hasCardFrame) cardFrameItem.accentColor else customThemeColor
-        Surface(
-            color = activeCardAccent?.copy(alpha = 0.16f)?.let { tint ->
-                Color(
-                    red = (CordlySurfaceDark.red * 0.82f + tint.red * 0.18f).coerceIn(0f, 1f),
-                    green = (CordlySurfaceDark.green * 0.82f + tint.green * 0.18f).coerceIn(0f, 1f),
-                    blue = (CordlySurfaceDark.blue * 0.82f + tint.blue * 0.18f).coerceIn(0f, 1f),
-                    alpha = 1f
-                )
-            } ?: CordlySurfaceDark,
-            shape = RoundedCornerShape(26.dp),
-            border = BorderStroke(
-                width = if (hasCardFrame) 2.8.dp else if (customThemeColor != null) 2.dp else 1.5.dp,
-                brush = Brush.linearGradient(borderColors)
-            ),
+        val activeCardAccent = if (hasCardFrame) cardFrameItem.accentColor else customThemeColor ?: CordlyBlurple
+        val rotatingBorderColors = remember(borderColors, animAngle) {
+            if (borderColors.size >= 2 && showCardAuraEffects) {
+                val shift = ((animAngle / 360f) * borderColors.size).toInt() % borderColors.size
+                List(borderColors.size) { idx -> borderColors[(idx + shift) % borderColors.size] }
+            } else {
+                borderColors
+            }
+        }
+        val activeCardShape = remember(cardFrameItem.id) { cardFrameShape(cardFrameItem.id) }
+        Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
                 .systemBarsPadding()
-                .fillMaxWidth(0.92f)
-                .widthIn(max = 460.dp)
-                .testTag("discord_profile_viewer_dialog")
+                .fillMaxWidth(0.95f)
+                .widthIn(max = 496.dp)
         ) {
-            Box(modifier = Modifier.fillMaxWidth()) {
+            if (showCardAuraEffects) {
+                ProfileCardExternalAuraOverlay(
+                    cardFrameId = cardFrameItem.id,
+                    borderColors = borderColors,
+                    accentColor = activeCardAccent,
+                    animAngle = animAngle,
+                    pulse = animPulse,
+                    introActive = introActive,
+                    introProgress = introProgress.value,
+                    insetDp = 20.dp,
+                    modifier = Modifier.matchParentSize()
+                )
+            }
+            Surface(
+                color = activeCardAccent.copy(alpha = 0.16f).let { tint ->
+                    Color(
+                        red = (CordlySurfaceDark.red * 0.82f + tint.red * 0.18f).coerceIn(0f, 1f),
+                        green = (CordlySurfaceDark.green * 0.82f + tint.green * 0.18f).coerceIn(0f, 1f),
+                        blue = (CordlySurfaceDark.blue * 0.82f + tint.blue * 0.18f).coerceIn(0f, 1f),
+                        alpha = 1f
+                    )
+                },
+                shape = activeCardShape,
+                border = BorderStroke(
+                    width = if (hasCardFrame) 3.0.dp else if (customThemeColor != null) 2.dp else 1.5.dp,
+                    brush = Brush.linearGradient(rotatingBorderColors)
+                ),
+                modifier = Modifier
+                    .padding(20.dp)
+                    .fillMaxWidth()
+                    .testTag("discord_profile_viewer_dialog")
+            ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
                 // Full-card Discord Profile Video Effect layer (5s or ∞ unlimited when equipped)
                 if (videoSource != null) {
                     ProfileVideoBackgroundPlayer(
@@ -410,7 +501,7 @@ fun DiscordProfileSheetDialog(
                                 )
                             )
                     )
-                } else if (cardFrameItem.artworkResId != null) {
+                } else if (cardFrameItem.artworkResId != null && cardFrameItem.id != "card_bluelock_striker") {
                     Image(
                         painter = painterResource(cardFrameItem.artworkResId),
                         contentDescription = cardFrameItem.title,
@@ -429,6 +520,17 @@ fun DiscordProfileSheetDialog(
                                     )
                                 )
                             )
+                    )
+                }
+
+                // Continuous animated ambient layer INSIDE all equipped card frames (stays alive after 5s intro!)
+                if (showCardAuraEffects) {
+                    ProfileCardAnimatedAmbientBackground(
+                        cardFrameId = cardFrameItem.id,
+                        accentColor = activeCardAccent,
+                        animAngle = animAngle,
+                        pulse = animPulse,
+                        modifier = Modifier.matchParentSize()
                     )
                 }
 
@@ -463,15 +565,50 @@ fun DiscordProfileSheetDialog(
                             )
                         }
 
-                        // Top-left 5s Video Badge + Top-right Close
+                        // Top-left 5s Video Badge + Top-right Close (padded safely inside crowns/bevels/horns)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp)
+                                .padding(start = 22.dp, end = 22.dp, top = 26.dp, bottom = 10.dp)
                         ) {
-                            if (videoSource != null) {
+                            if (hasAnimeCardIntro) {
+                                Surface(
+                                    color = Color.Black.copy(alpha = 0.65f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, activeCardAccent.copy(alpha = 0.75f)),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { replayNonce++ }
+                                        .testTag("replay_anime_card_intro_button")
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.PlayCircleFilled,
+                                            contentDescription = null,
+                                            tint = activeCardAccent,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = if (introActive) {
+                                                "${cardFrameItem.title.substringBefore(":")} • $entranceDurationBadge 🔊"
+                                            } else {
+                                                "Replay $entranceDurationBadge Intro 🔊"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            } else if (videoSource != null) {
                                 Surface(
                                     color = Color.Black.copy(alpha = 0.62f),
                                     shape = RoundedCornerShape(12.dp),
@@ -542,7 +679,7 @@ fun DiscordProfileSheetDialog(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 14.dp)
+                            .padding(start = 24.dp, end = 24.dp, top = 14.dp, bottom = 24.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.Bottom,
@@ -748,8 +885,19 @@ fun DiscordProfileSheetDialog(
                         }
                     }
                 }
+
+                // 5-Second Cinematic Intro Sequence Overlay (with sound!) when opening profile card
+                if (hasAnimeCardIntro && introActive) {
+                    ProfileCardFiveSecondEntranceOverlay(
+                        cardFrameId = equippedCardFrame,
+                        progress = introProgress.value,
+                        animAngle = animAngle,
+                        modifier = Modifier.matchParentSize()
+                    )
+                }
             }
         }
+    }
     }
 }
 

@@ -86,6 +86,7 @@ service cloud.firestore {
              (!('lastDailyClaimAtMs' in data) || (data.lastDailyClaimAtMs is int && data.lastDailyClaimAtMs >= 0)) &&
              (!('channelRewardClaimed' in data) || data.channelRewardClaimed is bool) &&
              (!('claimedCustomQuests' in data) || (data.claimedCustomQuests is list && data.claimedCustomQuests.size() <= 200)) &&
+             (!('claimedPromoCodes' in data) || (data.claimedPromoCodes is list && data.claimedPromoCodes.size() <= 50)) &&
              isValidTimestamp(data.createdAt) &&
              (!('updatedAt' in data) || data.updatedAt == null || isValidTimestamp(data.updatedAt));
     }
@@ -370,7 +371,7 @@ service cloud.firestore {
                          'ownedProfileEffects', 'equippedProfileEffect', 'profileVideoData', 'avatarVideoData',
                          'rank', 'rankExpiresAtMs', 'ultraTrialUsed', 'neoPlusTrialUsed', 'profileThemeColorHex',
                          'rewardedFriendUids', 'dailyClaimsCount', 'lastDailyClaimAtMs', 'channelRewardClaimed',
-                         'claimedCustomQuests', 'createdAt', 'updatedAt'
+                         'claimedCustomQuests', 'claimedPromoCodes', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidUserPrivate(incoming());
 
@@ -387,7 +388,7 @@ service cloud.firestore {
                          'ownedProfileEffects', 'equippedProfileEffect', 'profileVideoData', 'avatarVideoData',
                          'rank', 'rankExpiresAtMs', 'ultraTrialUsed', 'neoPlusTrialUsed', 'profileThemeColorHex',
                          'rewardedFriendUids', 'dailyClaimsCount', 'lastDailyClaimAtMs', 'channelRewardClaimed',
-                         'claimedCustomQuests', 'updatedAt'
+                         'claimedCustomQuests', 'claimedPromoCodes', 'updatedAt'
                        ]) &&
                        isValidTimestamp(incoming().updatedAt);
 
@@ -923,6 +924,48 @@ service cloud.firestore {
                        isValidTimestamp(incoming().claimedAt);
 
       allow update, delete: if false;
+    }
+
+    // --- 12. Limited Secret Promo Codes (e.g. 12340 for First 50 Users Only) ---
+    match /promo_codes/{codeId} {
+      allow get: if isSignedIn() && isValidId(codeId);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(codeId) &&
+                       codeId == 'secret_12340' &&
+                       incoming().code == '12340' &&
+                       incoming().rewardPoints == 20000 &&
+                       incoming().maxClaims == 50 &&
+                       incoming().claimedCount == 1 &&
+                       incoming().claimedUids is list &&
+                       incoming().claimedUids.size() == 1 &&
+                       (request.auth.uid in incoming().claimedUids) &&
+                       incoming().keys().hasAll(['code', 'rewardPoints', 'maxClaims', 'claimedCount', 'claimedUids', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['code', 'rewardPoints', 'maxClaims', 'claimedCount', 'claimedUids', 'createdAt', 'updatedAt']) &&
+                       isValidTimestamp(incoming().createdAt) &&
+                       isValidTimestamp(incoming().updatedAt);
+
+      allow update: if isSignedIn() &&
+                       isValidId(codeId) &&
+                       codeId == 'secret_12340' &&
+                       existing().claimedCount < existing().maxClaims &&
+                       existing().claimedCount < 50 &&
+                       !(request.auth.uid in existing().claimedUids) &&
+                       incoming().code == existing().code &&
+                       incoming().rewardPoints == 20000 &&
+                       incoming().maxClaims == existing().maxClaims &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().claimedCount == existing().claimedCount + 1 &&
+                       incoming().claimedCount <= 50 &&
+                       incoming().claimedUids is list &&
+                       incoming().claimedUids.size() == existing().claimedUids.size() + 1 &&
+                       incoming().claimedUids.hasAll(existing().claimedUids) &&
+                       (request.auth.uid in incoming().claimedUids) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['claimedCount', 'claimedUids', 'rewardPoints', 'updatedAt']) &&
+                       isValidTimestamp(incoming().updatedAt);
+
+      allow delete: if false;
     }
   }
 }

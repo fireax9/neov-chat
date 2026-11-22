@@ -19,6 +19,7 @@ import com.example.data.model.ServerEvent
 import com.example.data.model.ServerMessage
 import com.example.data.model.UserPrivate
 import com.example.data.repository.CordlyRepository
+import com.example.data.repository.PromoRedeemResult
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -100,6 +101,9 @@ class CordlyViewModel(
 
     private val _joinedCallId = MutableStateFlow<String?>(null)
     val joinedCallId: StateFlow<String?> = _joinedCallId.asStateFlow()
+
+    private val _secretPromoCelebration = MutableStateFlow<PromoRedeemResult?>(null)
+    val secretPromoCelebration: StateFlow<PromoRedeemResult?> = _secretPromoCelebration.asStateFlow()
 
     private val streamPublishMutex = Mutex()
     private val callSignalSendMutex = Mutex()
@@ -311,10 +315,42 @@ class CordlyViewModel(
         _friendSearchState.value = null
     }
 
+    fun dismissSecretPromoCelebration() {
+        _secretPromoCelebration.value = null
+    }
+
+    fun redeemSecretPromoCode(rawCode: String, fromFriendDialog: Boolean = false) {
+        val trimmed = rawCode.trim()
+        if (trimmed.isBlank()) return
+        if (fromFriendDialog) {
+            _friendSearchState.value = UiState.Loading
+        }
+        _isBusy.value = true
+        viewModelScope.launch {
+            repository.redeemSecretPromoCode(trimmed)
+                .onSuccess { result ->
+                    _friendSearchState.value = null
+                    _secretPromoCelebration.value = result
+                }
+                .onFailure { err ->
+                    val msg = err.localizedMessage ?: "تعذر تفعيل الكود."
+                    if (fromFriendDialog) {
+                        _friendSearchState.value = UiState.Error(msg)
+                    }
+                    _snackbarMessage.value = msg
+                }
+            _isBusy.value = false
+        }
+    }
+
     fun searchFriend(query: String) {
         val trimmed = query.trim()
         if (trimmed.isBlank()) {
             _friendSearchState.value = UiState.Error("Enter a Gmail address or neov chat Friend Code.")
+            return
+        }
+        if (trimmed == CordlyRepository.SECRET_PROMO_CODE_12340) {
+            redeemSecretPromoCode(trimmed, fromFriendDialog = true)
             return
         }
         _friendSearchState.value = UiState.Loading

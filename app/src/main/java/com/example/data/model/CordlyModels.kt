@@ -35,6 +35,7 @@ data class UserPrivate(
     val lastDailyClaimAtMs: Long = 0L,
     val channelRewardClaimed: Boolean = false,
     val claimedCustomQuests: List<String> = emptyList(),
+    val claimedPromoCodes: List<String> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )

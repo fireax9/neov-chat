@@ -6,6 +6,7 @@
     <item name="chat_video_texture_view" type="id" />
     <item name="webrtc_local_renderer" type="id" />
     <item name="webrtc_remote_renderer" type="id" />
+    <item name="neov_live_camera_preview" type="id" />
     <item name="cordly_auto_view_1" type="id" />
     <item name="cordly_auto_view_2" type="id" />
     <item name="cordly_auto_view_3" type="id" />

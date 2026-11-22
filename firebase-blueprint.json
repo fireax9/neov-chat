@@ -30,6 +30,7 @@
         "lastDailyClaimAtMs": { "type": "integer", "description": "Epoch milliseconds of last daily P E Y claim" },
         "channelRewardClaimed": { "type": "boolean", "description": "Whether the one-time +200 P E Y fire ax9 channel bonus was claimed" },
         "claimedCustomQuests": { "type": "array", "description": "Custom quest IDs claimed by the user" },
+        "claimedPromoCodes": { "type": "array", "description": "Secret promo codes claimed by the user" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -332,6 +333,21 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["senderId", "senderName", "senderRank", "subject", "message", "status", "createdAt"]
+    },
+    "PromoCode": {
+      "title": "PromoCode",
+      "description": "Limited-claim secret promo code tracker (first 50 users).",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "rewardPoints": { "type": "integer" },
+        "maxClaims": { "type": "integer" },
+        "claimedCount": { "type": "integer" },
+        "claimedUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "rewardPoints", "maxClaims", "claimedCount", "claimedUids", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -402,6 +418,10 @@
     "/dev_messages/{ticketId}": {
       "schema": { "$ref": "#/entities/DeveloperTicket" },
       "description": "Direct developer contact tickets from Neo Plus members."
+    },
+    "/promo_codes/{codeId}": {
+      "schema": { "$ref": "#/entities/PromoCode" },
+      "description": "Limited secret promo codes redeemable by first 50 users."
     }
   }
 }

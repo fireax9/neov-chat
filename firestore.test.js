@@ -869,3 +869,60 @@ test("8K calls, WebRTC signals, Neo+ full server control/events, and custom stic
   );
 });
 
+test("Secret promo code 12340 enforces 50-user cap, single claim per user, and unauthenticated deny", async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  await assertFails(unauthDb.collection("promo_codes").doc("secret_12340").get());
+
+  // First user creates secret_12340 with 1 claim
+  await assertSucceeds(
+    aliceDb.collection("promo_codes").doc("secret_12340").set({
+      code: "12340",
+      rewardPoints: 20000,
+      maxClaims: 50,
+      claimedCount: 1,
+      claimedUids: [ALICE_UID],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Alice cannot claim twice
+  await assertFails(
+    aliceDb.collection("promo_codes").doc("secret_12340").update({
+      claimedCount: 2,
+      rewardPoints: 20000,
+      claimedUids: [ALICE_UID, ALICE_UID],
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Bob can claim as #2
+  await assertSucceeds(
+    bobDb.collection("promo_codes").doc("secret_12340").update({
+      claimedCount: 2,
+      rewardPoints: 20000,
+      claimedUids: [ALICE_UID, BOB_UID],
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // User document accepts claimedPromoCodes + 20000 PEY points
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      email: "alice@gmail.com",
+      displayName: "Alice",
+      friendCode: "NEV-AL1C",
+      status: "online",
+      peyPoints: 20200,
+      claimedPromoCodes: ["12340"],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  );
+});
+
+

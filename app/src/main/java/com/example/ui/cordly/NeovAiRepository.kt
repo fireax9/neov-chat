@@ -11,6 +11,7 @@ import com.google.firebase.Firebase
 import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Content
+import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
 import kotlinx.coroutines.CancellationException
@@ -70,43 +71,59 @@ data class NeovAiChatMessage(
 
 class NeovAiRepository {
 
-    private fun buildChatModel(modelName: String): GenerativeModel =
-        Firebase.ai.generativeModel(
+    private val chatSystemInstruction by lazy {
+        content {
+            text(
+                "You are Neov AI, a fast, helpful, intelligent, friendly multimodal AI assistant powered by Gemini inside neov chat. " +
+                    "Respond naturally in the same language the user uses (Arabic, English, or any other language). " +
+                    "Keep greetings and simple replies brief and direct. " +
+                    "You can see photos, analyze recorded videos, listen to voice audio, and answer questions clearly."
+            )
+        }
+    }
+
+    private val liveSystemInstruction by lazy {
+        content {
+            text(
+                "You are Neov AI powered by Gemini in a live real-time voice and camera video call. " +
+                    "Reply concisely and naturally in 1 to 3 spoken sentences matching the user's language (Arabic or English). " +
+                    "Do NOT use markdown formatting, bullet points, hashtags, or asterisks because your reply is read aloud immediately."
+            )
+        }
+    }
+
+    private fun buildChatModel(
+        modelName: String,
+        backend: GenerativeBackend = GenerativeBackend.googleAI()
+    ): GenerativeModel =
+        Firebase.ai(backend = backend).generativeModel(
             modelName = modelName,
             generationConfig = generationConfig {
                 temperature = 0.7f
             },
-            systemInstruction = content {
-                text(
-                    "You are Neov AI, a fast, helpful, intelligent, friendly multimodal AI assistant powered by Gemini inside neov chat. " +
-                        "Respond naturally in the same language the user uses (Arabic, English, or any other language). " +
-                        "Keep greetings and simple replies brief and direct. " +
-                        "You can see photos, analyze recorded videos, listen to voice audio, and answer questions clearly."
-                )
-            }
+            systemInstruction = chatSystemInstruction
         )
 
-    private fun buildLiveModel(modelName: String): GenerativeModel =
-        Firebase.ai.generativeModel(
+    private fun buildLiveModel(
+        modelName: String,
+        backend: GenerativeBackend = GenerativeBackend.googleAI()
+    ): GenerativeModel =
+        Firebase.ai(backend = backend).generativeModel(
             modelName = modelName,
             generationConfig = generationConfig {
                 temperature = 0.7f
                 maxOutputTokens = 260
             },
-            systemInstruction = content {
-                text(
-                    "You are Neov AI powered by Gemini in a live real-time voice and camera video call. " +
-                        "Reply concisely and naturally in 1 to 3 spoken sentences matching the user's language (Arabic or English). " +
-                        "Do NOT use markdown formatting, bullet points, hashtags, or asterisks because your reply is read aloud immediately."
-                )
-            }
+            systemInstruction = liveSystemInstruction
         )
 
     private val chatFastModel by lazy { buildChatModel(FAST_GEMINI_MODEL) }
     private val chatStandardModel by lazy { buildChatModel(STANDARD_GEMINI_MODEL) }
+    private val chatVertexFallbackModel by lazy { buildChatModel(STANDARD_GEMINI_MODEL, GenerativeBackend.vertexAI()) }
 
     private val liveFastModel by lazy { buildLiveModel(FAST_GEMINI_MODEL) }
     private val liveStandardModel by lazy { buildLiveModel(STANDARD_GEMINI_MODEL) }
+    private val liveVertexFallbackModel by lazy { buildLiveModel(STANDARD_GEMINI_MODEL, GenerativeBackend.vertexAI()) }
 
     fun warmUp() {
         // Materialize lazy Gemini model handles off the critical send path.
@@ -114,29 +131,72 @@ class NeovAiRepository {
         liveFastModel
     }
 
+    private fun isProjectBillingOrUnavailableError(error: Throwable): Boolean {
+        val chain = generateSequence(error) { it.cause }
+        return chain.any { t ->
+            val msg = (t.message.orEmpty() + " " + t.toString()).lowercase()
+            msg.contains("free tier is not available") ||
+                msg.contains("set up billing") ||
+                msg.contains("project-unavailable") ||
+                msg.contains("billing")
+        }
+    }
+
+    private fun isNonRetryableClientError(error: Throwable): Boolean {
+        if (error is IllegalArgumentException) return true
+        if (isProjectBillingOrUnavailableError(error)) return true
+        val chain = generateSequence(error) { it.cause }
+        return chain.any { t ->
+            val msg = (t.message.orEmpty() + " " + t.toString()).lowercase()
+            msg.contains("18 mb") ||
+                msg.contains("invalid argument") ||
+                msg.contains("api key not valid") ||
+                msg.contains("permission denied") ||
+                msg.contains("forbidden")
+        }
+    }
+
     private fun isTransientDemandOrNetworkError(error: Throwable): Boolean {
+        if (isNonRetryableClientError(error)) return false
         if (error is TimeoutCancellationException) return true
-        val name = error::class.simpleName.orEmpty().lowercase()
-        val msg = (error.message.orEmpty() + " " + error.cause?.message.orEmpty()).lowercase()
-        return name.contains("server") ||
-            name.contains("unavailable") ||
-            name.contains("quota") ||
-            msg.contains("high demand") ||
-            msg.contains("spikes in demand") ||
-            msg.contains("overloaded") ||
-            msg.contains("unavailable") ||
-            msg.contains("try again later") ||
-            msg.contains("resource exhausted") ||
-            msg.contains("resource_exhausted") ||
-            msg.contains("quota") ||
-            msg.contains("rate limit") ||
-            msg.contains("503") ||
-            msg.contains("502") ||
-            msg.contains("504") ||
-            msg.contains("500") ||
-            msg.contains("429") ||
-            msg.contains("deadline") ||
-            msg.contains("timed out")
+        val chain = generateSequence(error) { it.cause }
+        return chain.any { t ->
+            val name = t::class.simpleName.orEmpty().lowercase()
+            val msg = (t.message.orEmpty() + " " + t.toString()).lowercase()
+            name.contains("server") ||
+                name.contains("unavailable") ||
+                name.contains("quota") ||
+                name.contains("firebaseai") ||
+                name.contains("unknownhost") ||
+                name.contains("sockettimeout") ||
+                name.contains("connect") ||
+                name.contains("ioexception") ||
+                msg.contains("high demand") ||
+                msg.contains("spikes in demand") ||
+                msg.contains("overloaded") ||
+                msg.contains("unavailable") ||
+                msg.contains("try again") ||
+                msg.contains("temporarily") ||
+                msg.contains("busy") ||
+                msg.contains("resource") ||
+                msg.contains("quota") ||
+                msg.contains("rate") ||
+                msg.contains("503") ||
+                msg.contains("502") ||
+                msg.contains("504") ||
+                msg.contains("500") ||
+                msg.contains("429") ||
+                msg.contains("deadline") ||
+                msg.contains("timed out") ||
+                msg.contains("timeout") ||
+                msg.contains("empty response") ||
+                msg.contains("network") ||
+                msg.contains("socket") ||
+                msg.contains("connection") ||
+                msg.contains("internal") ||
+                msg.contains("app check") ||
+                msg.contains("appcheck")
+        }
     }
 
     private fun streamWithFirstTokenTimeout(
@@ -188,22 +248,41 @@ class NeovAiRepository {
         }
     }
 
+    private fun buildNormalizedHistory(
+        history: List<NeovAiChatMessage>,
+        maxTurns: Int
+    ): List<Content> {
+        val cleaned = mutableListOf<Pair<String, String>>()
+        history.takeLast(maxTurns).forEach { msg ->
+            val trimmed = msg.text.trim()
+            if (!msg.isStreaming && trimmed.isNotEmpty()) {
+                val role = if (msg.isFromUser) "user" else "model"
+                if (cleaned.lastOrNull()?.first == role) {
+                    val merged = cleaned.last().second + "\n" + trimmed
+                    cleaned[cleaned.lastIndex] = role to merged
+                } else {
+                    cleaned.add(role to trimmed)
+                }
+            }
+        }
+        // Current turn is always "user", so ensure history does not end on an unanswered "user" turn
+        if (cleaned.lastOrNull()?.first == "user") {
+            cleaned.removeAt(cleaned.lastIndex)
+        }
+        if (cleaned.firstOrNull()?.first == "model") {
+            cleaned.removeAt(0)
+        }
+        return cleaned.map { (role, text) ->
+            content(role) { text(text) }
+        }
+    }
+
     fun streamMultimodalTurn(
         history: List<NeovAiChatMessage>,
         promptText: String,
         attachment: NeovAiAttachment?
     ): Flow<String> = flow {
-        val contents = mutableListOf<Content>()
-        // Include recent conversation turns as plain text context
-        history.takeLast(8).forEach { msg ->
-            if (!msg.isStreaming && msg.text.isNotBlank()) {
-                contents.add(
-                    content(if (msg.isFromUser) "user" else "model") {
-                        text(msg.text)
-                    }
-                )
-            }
-        }
+        val contents = buildNormalizedHistory(history, maxTurns = 8).toMutableList()
 
         val currentContent = content("user") {
             when (attachment?.kind) {
@@ -244,13 +323,14 @@ class NeovAiRepository {
         contents.add(currentContent)
 
         val hasHeavyMedia = attachment?.kind == NeovAttachmentKind.VIDEO || attachment?.kind == NeovAttachmentKind.AUDIO
-        val firstTokenMs = if (hasHeavyMedia) 18_000L else 9_000L
+        val firstTokenMs = if (hasHeavyMedia) 24_000L else 12_000L
 
         val candidates = listOf(
             Triple(FAST_GEMINI_MODEL, chatFastModel, true),
             Triple(STANDARD_GEMINI_MODEL, chatStandardModel, true),
             Triple("$FAST_GEMINI_MODEL (unary)", chatFastModel, false),
-            Triple("$STANDARD_GEMINI_MODEL (unary)", chatStandardModel, false)
+            Triple("$STANDARD_GEMINI_MODEL (unary)", chatStandardModel, false),
+            Triple("$STANDARD_GEMINI_MODEL (unary-retry)", chatStandardModel, false)
         )
 
         var lastError: Exception? = null
@@ -261,14 +341,20 @@ class NeovAiRepository {
             var emittedAny = false
             try {
                 if (index > 0) {
-                    delay(if (index == 1) 120L else 400L)
+                    val backoffMs = when (index) {
+                        1 -> 250L
+                        2 -> 750L
+                        3 -> 1250L
+                        else -> 1800L
+                    }
+                    delay(backoffMs)
                 }
                 if (useStream) {
                     streamWithFirstTokenTimeout(
                         model = model,
                         contents = contents,
                         firstTokenTimeoutMs = firstTokenMs,
-                        totalTimeoutMs = 45_000L
+                        totalTimeoutMs = 55_000L
                     ).collect { part ->
                         emittedAny = true
                         emit(part)
@@ -278,7 +364,7 @@ class NeovAiRepository {
                         break
                     }
                 } else {
-                    val response = withTimeout(30_000L) {
+                    val response = withTimeout(35_000L) {
                         model.generateContent(contents)
                     }
                     val text = response.text.orEmpty()
@@ -288,6 +374,7 @@ class NeovAiRepository {
                         delivered = true
                         break
                     }
+                    throw IllegalStateException("Gemini returned an empty response.")
                 }
             } catch (e: CancellationException) {
                 if (e is TimeoutCancellationException && !emittedAny && index < candidates.lastIndex) {
@@ -298,8 +385,30 @@ class NeovAiRepository {
                 throw e
             } catch (e: Exception) {
                 lastError = e
-                if (!emittedAny && index < candidates.lastIndex && isTransientDemandOrNetworkError(e)) {
-                    Log.w(TAG, "Gemini model $label hit demand/transient error (${e.message}); trying fallback.", e)
+                if (!emittedAny && isProjectBillingOrUnavailableError(e)) {
+                    try {
+                        var vertexEmitted = false
+                        streamWithFirstTokenTimeout(
+                            model = chatVertexFallbackModel,
+                            contents = contents,
+                            firstTokenTimeoutMs = firstTokenMs,
+                            totalTimeoutMs = 45_000L
+                        ).collect { part ->
+                            vertexEmitted = true
+                            emit(part)
+                        }
+                        if (vertexEmitted) {
+                            delivered = true
+                            break
+                        }
+                    } catch (_: CancellationException) {
+                    } catch (vertexErr: Exception) {
+                        Log.w(TAG, "Vertex AI fallback also unavailable (${vertexErr.message})")
+                    }
+                    throw e
+                }
+                if (!emittedAny && index < candidates.lastIndex && !isNonRetryableClientError(e)) {
+                    Log.w(TAG, "Gemini model $label failed (${e.message}); trying next fallback.", e)
                     continue
                 }
                 throw e
@@ -318,16 +427,7 @@ class NeovAiRepository {
         cameraFrame: Bitmap?,
         preferArabic: Boolean
     ): Result<String> {
-        val contents = mutableListOf<Content>()
-        liveHistory.takeLast(6).forEach { msg ->
-            if (msg.text.isNotBlank()) {
-                contents.add(
-                    content(if (msg.isFromUser) "user" else "model") {
-                        text(msg.text)
-                    }
-                )
-            }
-        }
+        val contents = buildNormalizedHistory(liveHistory, maxTurns = 6).toMutableList()
 
         val userTurn = content("user") {
             if (cameraFrame != null) {
@@ -371,7 +471,8 @@ class NeovAiRepository {
         val liveAttempts = listOf(
             FAST_GEMINI_MODEL to liveFastModel,
             STANDARD_GEMINI_MODEL to liveStandardModel,
-            "$FAST_GEMINI_MODEL-retry" to liveFastModel
+            "$FAST_GEMINI_MODEL-retry" to liveFastModel,
+            "$STANDARD_GEMINI_MODEL-retry" to liveStandardModel
         )
 
         var lastError: Throwable? = null
@@ -379,7 +480,7 @@ class NeovAiRepository {
             val (label, model) = attempt
             try {
                 if (index > 0) {
-                    delay(if (index == 1) 120L else 400L)
+                    delay(when (index) { 1 -> 250L; 2 -> 750L; else -> 1250L })
                 }
                 val response = withTimeout(30_000L) {
                     model.generateContent(contents)
@@ -397,7 +498,21 @@ class NeovAiRepository {
             } catch (e: Exception) {
                 Log.w(TAG, "Live Gemini turn ($label) failed: ${e.message}", e)
                 lastError = e
-                if (!isTransientDemandOrNetworkError(e)) {
+                if (isProjectBillingOrUnavailableError(e)) {
+                    try {
+                        val vertexResp = withTimeout(25_000L) {
+                            liveVertexFallbackModel.generateContent(contents)
+                        }
+                        val vertexText = vertexResp.text?.trim()
+                        if (!vertexText.isNullOrBlank()) {
+                            return Result.success(vertexText)
+                        }
+                    } catch (vertexErr: Exception) {
+                        Log.w(TAG, "Live Vertex AI fallback also unavailable (${vertexErr.message})")
+                    }
+                    return Result.failure(e)
+                }
+                if (isNonRetryableClientError(e)) {
                     return Result.failure(e)
                 }
             }

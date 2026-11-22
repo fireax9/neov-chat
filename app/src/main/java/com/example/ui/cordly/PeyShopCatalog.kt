@@ -11,7 +11,13 @@ enum class FrameShapeStyle {
     DOUBLE_STARBURST,
     FLAME_CROWN,
     MATRIX_DASHED,
-    SUKUNA_SHRINE_HANDS
+    LEGENDARY_NEON,
+    SUKUNA_SHRINE_HANDS,
+    DBZ_SUPER_SAIYAN,
+    DBZ_KAMEHAMEHA,
+    JJK_GOJO_VOID,
+    BLUELOCK_EGOIST,
+    BLUELOCK_SPATIAL_FLOW
 }
 
 data class ProfileFrameItem(
@@ -85,13 +91,13 @@ object PeyShopCatalog {
         ),
         ProfileFrameItem(
             id = "neon_cyber",
-            title = "Neon Cyber Scanner",
-            subtitle = "Spinning dashed cyan & blurple cyber ring",
+            title = "Legendary Neon Plasma",
+            subtitle = "Glowing cyan-magenta neon chassis, cyber wings & starlight sparks",
             price = 150L,
-            ringColors = listOf(Color(0xFF22D3EE), Color(0xFF5865F2), Color(0xFF22D3EE)),
-            strokeDp = 3.4f,
+            ringColors = listOf(Color(0xFF00F5FF), Color(0xFF6366F1), Color(0xFFEC4899), Color(0xFF22D3EE), Color(0xFF00F5FF)),
+            strokeDp = 4.2f,
             animated = true,
-            shapeStyle = FrameShapeStyle.MATRIX_DASHED,
+            shapeStyle = FrameShapeStyle.LEGENDARY_NEON,
             category = "standard"
         ),
         ProfileFrameItem(
@@ -241,41 +247,41 @@ object PeyShopCatalog {
         ProfileFrameItem(
             id = "dbz_super_saiyan",
             title = "Dragon Ball: Super Saiyan",
-            subtitle = "Super Saiyan warrior & Kamehameha emblem ring",
+            subtitle = "Golden Super Saiyan ki aura & lightning fused into avatar",
             price = 550L,
             ringColors = listOf(Color(0xFFFDE047), Color(0xFFF59E0B), Color(0xFF22D3EE), Color(0xFFFDE047)),
-            strokeDp = 4.4f,
+            strokeDp = 4.5f,
             animated = true,
-            shapeStyle = FrameShapeStyle.DOUBLE_STARBURST,
+            shapeStyle = FrameShapeStyle.DBZ_SUPER_SAIYAN,
             category = "anime",
             requiredRank = "ultra",
-            artworkResId = R.drawable.img_anime_dbz
+            artworkResId = null
         ),
         ProfileFrameItem(
             id = "dbz_kamehameha_sphere",
             title = "Dragon Ball: Kamehameha",
-            subtitle = "Blue energy Kamehameha blast circular crest",
+            subtitle = "Blazing cyan Kamehameha plasma blast surging across center",
             price = 800L,
-            ringColors = listOf(Color(0xFF38BDF8), Color(0xFF22D3EE), Color(0xFFFDE047), Color(0xFF38BDF8)),
-            strokeDp = 4.5f,
+            ringColors = listOf(Color(0xFF38BDF8), Color(0xFF22D3EE), Color(0xFFE0F2FE), Color(0xFF38BDF8)),
+            strokeDp = 4.6f,
             animated = true,
-            shapeStyle = FrameShapeStyle.FLAME_CROWN,
+            shapeStyle = FrameShapeStyle.DBZ_KAMEHAMEHA,
             category = "anime",
             requiredRank = "ultra",
-            artworkResId = R.drawable.img_anime_dbz
+            artworkResId = null
         ),
         ProfileFrameItem(
             id = "jjk_gojo_hollow",
             title = "Gojo: Six Eyes & Void",
-            subtitle = "Gojo Six Eyes & Unlimited Void circular ring",
+            subtitle = "Six Eyes glow, Blue + Red clash & Hollow Purple core",
             price = 850L,
-            ringColors = listOf(Color(0xFFA855F7), Color(0xFF38BDF8), Color(0xFFEC4899), Color(0xFFA855F7)),
-            strokeDp = 4.5f,
+            ringColors = listOf(Color(0xFFA855F7), Color(0xFF38BDF8), Color(0xFFEF4444), Color(0xFFA855F7)),
+            strokeDp = 4.6f,
             animated = true,
-            shapeStyle = FrameShapeStyle.CIRCLE_ORBIT,
+            shapeStyle = FrameShapeStyle.JJK_GOJO_VOID,
             category = "anime",
             requiredRank = "ultra",
-            artworkResId = R.drawable.img_anime_gojo
+            artworkResId = null
         ),
         ProfileFrameItem(
             id = "jjk_sukuna_hands",
@@ -292,29 +298,29 @@ object PeyShopCatalog {
         ),
         ProfileFrameItem(
             id = "bluelock_egoist",
-            title = "Blue Lock: Eyes & Ball",
-            subtitle = "Glowing striker eyes & blazing ball circular ring",
+            title = "Blue Lock: Striker Ball",
+            subtitle = "Blazing striker ball & blue flame egoist aura inside avatar",
             price = 600L,
             ringColors = listOf(Color(0xFF1D4ED8), Color(0xFF22D3EE), Color(0xFF38BDF8), Color(0xFF22D3EE)),
-            strokeDp = 4.4f,
+            strokeDp = 4.5f,
             animated = true,
-            shapeStyle = FrameShapeStyle.OCTAGON_CYBER,
+            shapeStyle = FrameShapeStyle.BLUELOCK_EGOIST,
             category = "anime",
             requiredRank = "ultra",
-            artworkResId = R.drawable.img_anime_bluelock
+            artworkResId = null
         ),
         ProfileFrameItem(
             id = "bluelock_isagi_aura",
             title = "Blue Lock: Spatial Flow",
-            subtitle = "Neon cyan striker chain aura ring",
+            subtitle = "Neon metavision puzzle pieces & tactical flow woven across center",
             price = 800L,
             ringColors = listOf(Color(0xFF10B981), Color(0xFF22D3EE), Color(0xFF1D4ED8), Color(0xFF10B981)),
-            strokeDp = 4.4f,
+            strokeDp = 4.5f,
             animated = true,
-            shapeStyle = FrameShapeStyle.MATRIX_DASHED,
+            shapeStyle = FrameShapeStyle.BLUELOCK_SPATIAL_FLOW,
             category = "anime",
             requiredRank = "ultra",
-            artworkResId = R.drawable.img_anime_bluelock
+            artworkResId = null
         )
     )
 
@@ -331,11 +337,11 @@ object PeyShopCatalog {
         ),
         ProfileCardFrameItem(
             id = "card_neon_blurple",
-            title = "Neon Blurple Edge",
-            subtitle = "Electric Discord blue & cyan full card frame",
+            title = "Legendary Neon Cyber",
+            subtitle = "Dual neon plasma tubes, cyber wings & glowing holographic HUD",
             price = 300L,
-            borderColors = listOf(Color(0xFF5865F2), Color(0xFF22D3EE), Color(0xFF8B5CF6), Color(0xFF5865F2)),
-            accentColor = Color(0xFF22D3EE),
+            borderColors = listOf(Color(0xFF00F5FF), Color(0xFF6366F1), Color(0xFFEC4899), Color(0xFF22D3EE), Color(0xFF00F5FF)),
+            accentColor = Color(0xFF00F5FF),
             category = "standard"
         ),
         ProfileCardFrameItem(
@@ -366,11 +372,11 @@ object PeyShopCatalog {
             requiredRank = "ultra",
             category = "gaming"
         ),
-        // Anime Full Profile Card Frames — Strictly Dragon Ball, Jujutsu Kaisen & Blue Lock ONLY
+        // Anime Full Profile Card Frames — Strictly Dragon Ball, Jujutsu Kaisen & Blue Lock ONLY (with 5s animation + sound + outer aura)
         ProfileCardFrameItem(
             id = "card_dbz_kamehameha",
             title = "Dragon Ball: Kamehameha Card",
-            subtitle = "Super Saiyan warrior & Kamehameha full profile frame",
+            subtitle = "5s animated Kamehameha blast + sound & golden ki outer aura",
             price = 850L,
             borderColors = listOf(Color(0xFFFDE047), Color(0xFFF59E0B), Color(0xFF22D3EE), Color(0xFFFDE047)),
             accentColor = Color(0xFFFDE047),
@@ -380,8 +386,8 @@ object PeyShopCatalog {
         ),
         ProfileCardFrameItem(
             id = "card_jjk_gojo_void",
-            title = "Gojo: Six Eyes & Void Card",
-            subtitle = "Glowing Six Eyes & Unlimited Void full profile frame",
+            title = "Gojo: Hollow Purple Card",
+            subtitle = "19s Aka -> Kyoshiki Murasaki full voice & Hollow Purple blast",
             price = 900L,
             borderColors = listOf(Color(0xFF38BDF8), Color(0xFFA855F7), Color(0xFFEC4899), Color(0xFF38BDF8)),
             accentColor = Color(0xFFA855F7),
@@ -390,20 +396,31 @@ object PeyShopCatalog {
             artworkResId = R.drawable.img_anime_gojo
         ),
         ProfileCardFrameItem(
+            id = "card_jjk_gojo_domain",
+            title = "Gojo: Domain Expansion",
+            subtitle = "5.5s Unlimited Void real voice effect + singularity aura",
+            price = 1250L,
+            borderColors = listOf(Color(0xFFFFFFFF), Color(0xFF38BDF8), Color(0xFF6366F1), Color(0xFFA855F7), Color(0xFFFFFFFF)),
+            accentColor = Color(0xFF7DD3FC),
+            requiredRank = "ultra",
+            category = "anime",
+            artworkResId = null
+        ),
+        ProfileCardFrameItem(
             id = "card_bluelock_striker",
-            title = "Blue Lock: Eyes & Ball Card",
-            subtitle = "Glowing striker eyes & blazing soccer ball full card",
+            title = "Blue Lock: Ball & Puzzles",
+            subtitle = "5s blazing blue striker ball & spatial puzzle locks + sound & aura",
             price = 850L,
             borderColors = listOf(Color(0xFF1D4ED8), Color(0xFF22D3EE), Color(0xFF10B981), Color(0xFF1D4ED8)),
             accentColor = Color(0xFF22D3EE),
             requiredRank = "ultra",
             category = "anime",
-            artworkResId = R.drawable.img_anime_bluelock
+            artworkResId = null
         ),
         ProfileCardFrameItem(
             id = "card_jjk_sukuna_shrine",
-            title = "Sukuna: Domain Hands Card",
-            subtitle = "Neo+ Malevolent Shrine hands framing your entire profile",
+            title = "Sukuna: Malevolent Shrine Card",
+            subtitle = "18s Malevolent Shrine real voice & full slashes + outer flame",
             price = 1200L,
             borderColors = listOf(Color(0xFFEF4444), Color(0xFF991B1B), Color(0xFF9333EA), Color(0xFFEF4444)),
             accentColor = Color(0xFFEF4444),

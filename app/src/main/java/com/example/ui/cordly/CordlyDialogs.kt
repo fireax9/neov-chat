@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
@@ -52,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.LookupKey
@@ -90,11 +93,19 @@ fun AddFriendDialog(
                     text = strings.addFriendDesc,
                     style = MaterialTheme.typography.bodyMedium
                 )
-                OutlinedTextField(
+                    OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
                     label = { Text(strings.addFriendInputLabel) },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            if (query.isNotBlank() && searchState !is UiState.Loading) {
+                                onSearch(query)
+                            }
+                        }
+                    ),
                     trailingIcon = {
                         Icon(Icons.Rounded.Search, contentDescription = null)
                     },

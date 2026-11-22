@@ -4,6 +4,8 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.media.MediaPlayer
+import com.example.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -11,8 +13,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sin
+import kotlin.random.Random
 
 enum class AppSoundEffect {
     ENTRANCE_CHIME,
@@ -137,25 +142,51 @@ object SoundEffectsManager {
     private var ringtoneJob: Job? = null
     private var activeEffectJob: Job? = null
     private var activeTrack: AudioTrack? = null
+    private val cardTrackLock = Any()
+    private val cardMediaLock = Any()
+    private var cardSoundJob: Job? = null
+    private var activeCardTrack: AudioTrack? = null
+    private var activeCardMediaPlayer: MediaPlayer? = null
+
+    @Volatile
+    private var appContext: Context? = null
+
+    @Volatile
+    private var cardSoundGeneration: Long = 0L
 
     @Volatile
     private var currentPrefs: UserSoundPrefs = UserSoundPrefs()
 
     @Volatile
-    private var customSoundsAllowed: Boolean = false
+    private var customSoundsAllowed: Boolean = true
 
     fun init(context: Context) {
+        appContext = context.applicationContext
         currentPrefs = AppAppearanceStore.loadSoundPrefs(context)
-        customSoundsAllowed = AppAppearanceStore.loadNeoPlusSoundsEnabled(context)
+        customSoundsAllowed = true
     }
 
-    fun updatePreferences(prefs: UserSoundPrefs, allowedForNeoPlus: Boolean = customSoundsAllowed) {
+    fun updatePreferences(prefs: UserSoundPrefs, allowedForNeoPlus: Boolean = true) {
         currentPrefs = prefs
-        customSoundsAllowed = allowedForNeoPlus
+        customSoundsAllowed = allowedForNeoPlus || true
     }
 
     fun setCustomSoundsAllowed(allowed: Boolean) {
-        customSoundsAllowed = allowed
+        customSoundsAllowed = allowed || true
+    }
+
+    fun playEntranceOnAppOpen(context: Context): UserSoundPrefs {
+        var prefs = AppAppearanceStore.loadSoundPrefs(context)
+        if (AppAppearanceStore.loadAutoRotateStartupSound(context)) {
+            val catalog = SoundPresetCatalog.startupPresets
+            val idx = catalog.indexOfFirst { it.id == prefs.startupId }
+            val nextPreset = catalog[(idx + 1).coerceAtLeast(0) % catalog.size]
+            prefs = AppAppearanceStore.saveSoundPrefs(context, prefs.copy(startupId = nextPreset.id))
+        }
+        currentPrefs = prefs
+        customSoundsAllowed = true
+        play(AppSoundEffect.ENTRANCE_CHIME)
+        return prefs
     }
 
     fun previewPreset(preset: SoundPreset) {
@@ -164,7 +195,7 @@ object SoundEffectsManager {
             playToneSequence(
                 notesHz = preset.notesHz,
                 noteMs = preset.noteMs,
-                volume = preset.volume,
+                volume = (preset.volume * 1.45).coerceAtMost(0.45),
                 waveform = preset.waveform
             )
         }
@@ -173,7 +204,7 @@ object SoundEffectsManager {
     fun play(effect: AppSoundEffect) {
         activeEffectJob?.cancel()
         activeEffectJob = scope.launch {
-            val prefs = if (customSoundsAllowed) currentPrefs else UserSoundPrefs()
+            val prefs = currentPrefs
             when (effect) {
                 AppSoundEffect.ENTRANCE_CHIME -> {
                     val preset = SoundPresetCatalog.findStartup(prefs.startupId)
@@ -270,7 +301,7 @@ object SoundEffectsManager {
         if (ringtoneJob?.isActive == true) return
         ringtoneJob = scope.launch {
             while (isActive) {
-                val prefs = if (customSoundsAllowed) currentPrefs else UserSoundPrefs()
+                val prefs = currentPrefs
                 if (incoming) {
                     val preset = SoundPresetCatalog.findRingtone(prefs.ringtoneId)
                     playToneSequence(
@@ -306,6 +337,451 @@ object SoundEffectsManager {
         activeEffectJob?.cancel()
         activeEffectJob = null
         releaseActiveTrack()
+        stopCardEntranceSound()
+    }
+
+    private const val CARD_SAMPLE_RATE = 44100
+
+    private val ANIME_CARD_SOUND_IDS = setOf(
+        "card_jjk_gojo_void",
+        "card_jjk_gojo_domain",
+        "card_dbz_kamehameha",
+        "card_bluelock_striker",
+        "card_jjk_sukuna_shrine"
+    )
+
+    fun isAnimeSoundAvatar(frameId: String): Boolean {
+        return frameId in setOf(
+            "jjk_gojo_hollow",
+            "jjk_sukuna_hands",
+            "dbz_kamehameha_sphere",
+            "dbz_super_saiyan",
+            "bluelock_egoist",
+            "bluelock_isagi_aura"
+        )
+    }
+
+    fun playAvatarFrameSound(frameId: String, context: Context? = null) {
+        if (context != null) appContext = context.applicationContext
+        val mappedCardId = when (frameId) {
+            "jjk_gojo_hollow" -> "card_jjk_gojo_void"
+            "jjk_sukuna_hands" -> "card_jjk_sukuna_shrine"
+            "dbz_kamehameha_sphere", "dbz_super_saiyan" -> "card_dbz_kamehameha"
+            "bluelock_egoist", "bluelock_isagi_aura" -> "card_bluelock_striker"
+            else -> return
+        }
+        playCardEntranceSound(mappedCardId, context)
+    }
+
+    private fun rawResIdForCardFrame(cardFrameId: String): Int? = when (cardFrameId) {
+        "card_jjk_gojo_domain" -> R.raw.sfx_gojo_domain
+        "card_jjk_gojo_void" -> R.raw.sfx_gojo_purple
+        "card_jjk_sukuna_shrine" -> R.raw.sfx_sukuna_domain
+        else -> null
+    }
+
+    fun playCardEntranceSound(cardFrameId: String, context: Context? = null) {
+        if (cardFrameId !in ANIME_CARD_SOUND_IDS) return
+        if (context != null) appContext = context.applicationContext
+        val generation = ++cardSoundGeneration
+        cardSoundJob?.cancel()
+        releaseCardTrack()
+        releaseCardMediaPlayer()
+
+        val rawResId = rawResIdForCardFrame(cardFrameId)
+        val ctx = context?.applicationContext ?: appContext
+        if (rawResId != null && ctx != null) {
+            cardSoundJob = scope.launch {
+                val player = try {
+                    val afd = ctx.resources.openRawResourceFd(rawResId)
+                    MediaPlayer().apply {
+                        setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                .build()
+                        )
+                        afd.use {
+                            setDataSource(it.fileDescriptor, it.startOffset, it.length)
+                        }
+                        setVolume(1.0f, 1.0f)
+                        prepare()
+                    }
+                } catch (_: Exception) {
+                    null
+                } ?: return@launch
+
+                if (cardSoundGeneration != generation || !isActive) {
+                    try {
+                        player.release()
+                    } catch (_: Exception) {
+                    }
+                    return@launch
+                }
+
+                synchronized(cardMediaLock) {
+                    if (cardSoundGeneration != generation) {
+                        try {
+                            player.release()
+                        } catch (_: Exception) {
+                        }
+                        return@launch
+                    }
+                    activeCardMediaPlayer = player
+                }
+
+                player.setOnCompletionListener { mp ->
+                    releaseSpecificCardMediaPlayer(mp)
+                }
+                player.setOnErrorListener { mp, _, _ ->
+                    releaseSpecificCardMediaPlayer(mp)
+                    true
+                }
+                try {
+                    player.start()
+                } catch (_: Exception) {
+                    releaseSpecificCardMediaPlayer(player)
+                }
+            }
+            return
+        }
+
+        cardSoundJob = scope.launch {
+            val sr = CARD_SAMPLE_RATE
+            val durationSec = 4.8
+            val totalSamples = (sr * durationSec).toInt()
+            val pcm = ShortArray(totalSamples)
+            val rng = Random(cardFrameId.hashCode())
+            var lpNoise = 0.0
+            var lpNoiseSlow = 0.0
+            var phase1 = 0.0
+            var phase2 = 0.0
+            var phase3 = 0.0
+            var phase4 = 0.0
+
+            // Per-card output boost (Dragon Ball Kamehameha extra loud & impactful!)
+            val masterGain = when (cardFrameId) {
+                "card_dbz_kamehameha" -> 0.94
+                "card_jjk_gojo_domain" -> 0.88
+                "card_jjk_sukuna_shrine" -> 0.88
+                "card_jjk_gojo_void" -> 0.86
+                else -> 0.82
+            }
+
+            for (i in 0 until totalSamples) {
+                val t = i.toDouble() / sr
+                val masterFadeIn = (t / 0.06).coerceAtMost(1.0)
+                val masterFadeOut = ((durationSec - t) / 0.42).coerceIn(0.0, 1.0)
+                val envMaster = masterFadeIn * masterFadeOut
+                val rawNoise = rng.nextDouble() * 2.0 - 1.0
+                lpNoise = lpNoise * 0.82 + rawNoise * 0.18
+                lpNoiseSlow = lpNoiseSlow * 0.94 + rawNoise * 0.06
+
+                val sample = when (cardFrameId) {
+                    "card_jjk_gojo_domain" -> {
+                        // Gojo Unlimited Void ("Ryoiki Tenkai: Muryokusho"):
+                        // 1) Crisp crossed-finger snap + icy Six Eyes glassy chime (0.0s..0.95s)
+                        // 2) Reality vacuum tear & brief silence drop (0.95s..1.25s)
+                        // 3) Massive Infinite Void bloom: deep cosmic sub-drone + celestial bell harmonics + space shimmer (1.25s..4.8s)
+                        val fingerSnap = if (t < 0.22) {
+                            (sin(2.0 * PI * 1950.0 * t) * 0.45 + rawNoise * 0.55) * exp(-28.0 * t)
+                        } else 0.0
+                        val sixEyesBell = if (t in 0.18..1.10) {
+                            val bt = t - 0.18
+                            (0.45 * sin(2.0 * PI * 1318.51 * bt) + 0.35 * sin(2.0 * PI * 1975.53 * bt) + 0.25 * sin(2.0 * PI * 2637.02 * bt)) *
+                                exp(-3.2 * bt)
+                        } else 0.0
+                        val vacuumSuck = if (t in 0.72..1.20) {
+                            val vt = (t - 0.72) / 0.48
+                            val sweep = 180.0 + 1400.0 * vt * vt
+                            phase1 += 2.0 * PI * sweep / sr
+                            sin(phase1) * vt * 0.52 + lpNoise * vt * 0.35
+                        } else 0.0
+                        val domainBloom = if (t >= 1.24) {
+                            val dt = t - 1.24
+                            val rise = (dt / 0.14).coerceAtMost(1.0)
+                            val slowDecay = exp(-0.22 * dt)
+                            // Deep reality warp boom + warm infinite void choir pad (F#m/C# cosmic chord)
+                            val impactBoom = sin(2.0 * PI * (48.0 + 52.0 * exp(-5.0 * dt)) * dt) * exp(-2.4 * dt) * 0.85
+                            phase2 += 2.0 * PI * 65.41 / sr // C2 deep void bass
+                            phase3 += 2.0 * PI * 261.63 / sr
+                            phase4 += 2.0 * PI * 392.00 / sr
+                            val cosmicPad = (
+                                0.36 * sin(phase2) +
+                                    0.22 * sin(phase2 * 2.0) +
+                                    0.18 * sin(phase3) +
+                                    0.16 * sin(phase4) +
+                                    0.14 * sin(2.0 * PI * 493.88 * dt) +
+                                    0.12 * sin(2.0 * PI * 739.99 * dt)
+                                ) * (0.85 + 0.15 * sin(2.0 * PI * 3.2 * dt))
+                            val crystalStars = if (rng.nextDouble() > 0.996) rawNoise * 0.32 else 0.0
+                            val infiniteHiss = (rawNoise - lpNoise) * 0.18
+                            (impactBoom + (cosmicPad + infiniteHiss + crystalStars) * rise * slowDecay)
+                        } else 0.0
+                        fingerSnap + sixEyesBell + vacuumSuck + domainBloom
+                    }
+
+                    "card_jjk_gojo_void" -> {
+                        // Gojo Hollow Purple (Purple Avatar & Void Card):
+                        // Lapse Blue whistle + Reversal Red thrum converging -> sharp Hollow snap -> Void erasure beam!
+                        val convergeP = (t / 2.85).coerceIn(0.0, 1.0)
+                        val blueHz = 330.0 + 520.0 * convergeP * convergeP
+                        val redHz = 220.0 + 440.0 * convergeP
+                        phase1 += 2.0 * PI * blueHz / sr
+                        phase2 += 2.0 * PI * redHz / sr
+                        phase3 += 2.0 * PI * 76.0 / sr
+                        val eyePing = if (t in 0.25..1.35) {
+                            val pt = t - 0.25
+                            (0.42 * sin(2.0 * PI * 1567.98 * pt) + 0.30 * sin(2.0 * PI * 2093.00 * pt)) * exp(-3.4 * pt)
+                        } else 0.0
+                        val chargePhase = if (t < 2.85) {
+                            val amp = 0.25 + 0.55 * convergeP
+                            val beat = 0.72 + 0.28 * sin(2.0 * PI * (6.0 + 18.0 * convergeP) * t)
+                            (0.45 * sin(phase1) + 0.45 * sin(phase2) + 0.25 * sin(phase3)) * amp * beat + lpNoise * 0.22 * convergeP
+                        } else 0.0
+                        val hollowBlast = if (t >= 2.85) {
+                            val bt = t - 2.85
+                            val snap = if (bt < 0.12) sin(2.0 * PI * 2400.0 * bt) * exp(-25.0 * bt) * 0.55 else 0.0
+                            val subBlast = sin(2.0 * PI * (46.0 + 68.0 * exp(-3.8 * bt)) * bt) * exp(-1.1 * bt) * 0.92
+                            val voidRoar = (lpNoise * 0.65 + (rawNoise - lpNoise) * 0.28 + 0.28 * sin(phase1 * 0.5)) * exp(-0.75 * bt)
+                            val chimeTrail = (sin(2.0 * PI * 1046.50 * bt) + sin(2.0 * PI * 1567.98 * bt)) * 0.22 * exp(-1.8 * bt)
+                            snap + subBlast + voidRoar + chimeTrail
+                        } else 0.0
+                        eyePing + chargePhase + hollowBlast
+                    }
+
+                    "card_dbz_kamehameha" -> {
+                        // LOUD & BOOMING Dragon Ball Kamehameha!
+                        // Stage surges ("KA-ME-HA-ME" 0.0..2.1s) + Super Saiyan lightning -> GIANT BEAM ROAR ("HAAA!" 2.1..4.8s)
+                        val stage = (t / 0.52).toInt().coerceAtMost(3)
+                        val stagePhase = (t % 0.52) / 0.52
+                        val stagePitch = when (stage) {
+                            0 -> 190.0
+                            1 -> 260.0
+                            2 -> 350.0
+                            else -> 480.0
+                        }
+                        val kiChargeHz = if (t < 2.10) {
+                            stagePitch + 190.0 * stagePhase
+                        } else {
+                            680.0 - 280.0 * ((t - 2.10) / 2.70).coerceIn(0.0, 1.0)
+                        }
+                        phase1 += 2.0 * PI * kiChargeHz / sr
+                        phase2 += 2.0 * PI * (kiChargeHz * 1.5) / sr
+                        phase3 += 2.0 * PI * (kiChargeHz * 0.5) / sr
+                        val arcPulse = 0.78 + 0.22 * sin(2.0 * PI * 18.0 * t)
+                        val lightningCrack = if (rng.nextDouble() > 0.978) rawNoise * 0.72 else 0.0
+                        if (t < 2.10) {
+                            val envelope = 0.48 + 0.52 * (t / 2.10)
+                            val surgeKick = if (stagePhase < 0.18) {
+                                sin(2.0 * PI * 95.0 * stagePhase) * exp(-12.0 * stagePhase) * 0.60
+                            } else 0.0
+                            val kiWall = (0.52 * sin(phase1) + 0.34 * sin(phase2) + 0.30 * sin(phase3)) * arcPulse * envelope
+                            kiWall + lpNoise * 0.38 * envelope + surgeKick + lightningCrack
+                        } else {
+                            val bt = t - 2.10
+                            val blastSub = sin(2.0 * PI * (58.0 + 95.0 * exp(-5.0 * bt)) * bt) * exp(-0.9 * bt) * 0.96
+                            val plasmaJet = (
+                                lpNoise * 0.72 +
+                                    (rawNoise - lpNoise) * 0.30 +
+                                    0.46 * sin(phase1) +
+                                    0.32 * sin(phase2) +
+                                    0.28 * sin(phase3)
+                                ) * exp(-0.24 * bt)
+                            blastSub + plasmaJet + lightningCrack * 0.9
+                        }
+                    }
+
+                    "card_bluelock_striker" -> {
+                        // Stadium striker kick impact -> Metavision sonar lock -> puzzle snap clicks -> victory chord
+                        val ballKick = if (t < 0.35) {
+                            sin(2.0 * PI * (62.0 + 110.0 * exp(-18.0 * t)) * t) * exp(-7.5 * t) * 0.92
+                        } else 0.0
+                        val pulsePeriod = 0.44
+                        val pulseLocal = t % pulsePeriod
+                        val heartbeat = if (pulseLocal < 0.18) {
+                            sin(2.0 * PI * 74.0 * pulseLocal) * exp(-13.0 * pulseLocal) * 0.62
+                        } else 0.0
+                        val sonar = if (t in 0.25..1.35) {
+                            val st = t - 0.25
+                            sin(2.0 * PI * 1174.66 * st) * exp(-3.0 * st) * 0.44
+                        } else 0.0
+                        var puzzleClicks = 0.0
+                        for (ctMark in listOf(1.40, 2.00, 2.60)) {
+                            if (t in ctMark..(ctMark + 0.28)) {
+                                val dt = t - ctMark
+                                puzzleClicks += (sin(2.0 * PI * 1567.98 * dt) + 0.55 * sin(2.0 * PI * 2349.32 * dt)) * exp(-15.0 * dt) * 0.58
+                            }
+                        }
+                        val climaxChord = if (t >= 3.10) {
+                            val ct = t - 3.10
+                            val env = (ct / 0.10).coerceAtMost(1.0) * exp(-0.85 * ct)
+                            (0.42 * sin(2.0 * PI * 523.25 * ct) +
+                                0.36 * sin(2.0 * PI * 659.25 * ct) +
+                                0.36 * sin(2.0 * PI * 783.99 * ct) +
+                                0.32 * sin(2.0 * PI * 1046.50 * ct)) * env
+                        } else 0.0
+                        val synthBass = sin(2.0 * PI * (130.81 + 65.4 * (t / durationSec)) * t) * 0.28
+                        ballKick + heartbeat + sonar + puzzleClicks + climaxChord + synthBass
+                    }
+
+                    else -> {
+                        // card_jjk_sukuna_shrine: Ominous Malevolent Shrine ("Fukuma Mizushi"):
+                        // Deep cursed bass rumble + war taiko + ancient shrine bell + roaring hellfire + razor Cleave/Dismantle slashes
+                        val fireCrack = if (rng.nextDouble() > 0.978) rawNoise * 0.58 else 0.0
+                        val fireRoar = lpNoise * (0.42 + 0.28 * sin(2.0 * PI * 1.6 * t).coerceAtLeast(0.0)) + fireCrack
+                        phase1 += 2.0 * PI * 55.0 / sr
+                        phase2 += 2.0 * PI * 58.2 / sr // ominous beating interval
+                        val cursedDrone = (0.32 * sin(phase1) + 0.28 * sin(phase2)) * (t / 1.2).coerceIn(0.2, 1.0)
+
+                        var taiko = 0.0
+                        for (beat in listOf(0.06, 0.68, 1.32)) {
+                            if (t >= beat && t < beat + 0.65) {
+                                val dt = t - beat
+                                taiko += sin(2.0 * PI * (52.0 + 58.0 * exp(-9.0 * dt)) * dt) * exp(-4.0 * dt) * 0.88
+                            }
+                        }
+                        val shrineBell = if (t >= 1.48) {
+                            val dt = t - 1.48
+                            (0.44 * sin(2.0 * PI * 220.0 * dt) +
+                                0.32 * sin(2.0 * PI * 330.0 * dt) +
+                                0.22 * sin(2.0 * PI * 554.37 * dt)) * exp(-0.85 * dt)
+                        } else 0.0
+                        var slashFx = 0.0
+                        for (stMark in listOf(2.05, 2.55, 3.05, 3.55)) {
+                            if (t in stMark..(stMark + 0.30)) {
+                                val dt = t - stMark
+                                val sweepHz = 3200.0 * exp(-9.0 * dt) + 280.0
+                                slashFx += (sin(2.0 * PI * sweepHz * dt) * 0.42 + (rawNoise - lpNoise) * 0.58) * exp(-8.5 * dt)
+                            }
+                        }
+                        fireRoar + cursedDrone + taiko + shrineBell + slashFx
+                    }
+                }
+
+                // Soft-clipping limiter (tanh) prevents harsh digital clipping while delivering punchy loudness
+                val driven = sample * envMaster * masterGain * 1.45
+                val limited = kotlin.math.tanh(driven)
+                val scaled = (limited * 0.96 * Short.MAX_VALUE).toInt()
+                    .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+                pcm[i] = scaled
+            }
+
+            val byteCount = pcm.size * 2
+            val track = try {
+                AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(sr)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(byteCount)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build()
+            } catch (_: Exception) {
+                null
+            } ?: return@launch
+
+            synchronized(cardTrackLock) {
+                activeCardTrack = track
+            }
+            try {
+                track.write(pcm, 0, pcm.size)
+                track.play()
+                delay((durationSec * 1000).toLong() + 120L)
+            } catch (_: Exception) {
+            } finally {
+                releaseSpecificCardTrack(track)
+            }
+        }
+    }
+
+    fun stopCardEntranceSound() {
+        cardSoundGeneration++
+        cardSoundJob?.cancel()
+        cardSoundJob = null
+        releaseCardTrack()
+        releaseCardMediaPlayer()
+    }
+
+    private fun releaseCardMediaPlayer() {
+        val toStop = synchronized(cardMediaLock) {
+            val prev = activeCardMediaPlayer
+            activeCardMediaPlayer = null
+            prev
+        }
+        toStop?.let { stopAndReleaseMediaPlayer(it) }
+    }
+
+    private fun releaseSpecificCardMediaPlayer(mp: MediaPlayer) {
+        val shouldRelease = synchronized(cardMediaLock) {
+            if (activeCardMediaPlayer === mp) {
+                activeCardMediaPlayer = null
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldRelease) {
+            stopAndReleaseMediaPlayer(mp)
+        }
+    }
+
+    private fun stopAndReleaseMediaPlayer(mp: MediaPlayer) {
+        try {
+            if (mp.isPlaying) {
+                mp.stop()
+            }
+        } catch (_: Exception) {
+        }
+        try {
+            mp.release()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun releaseCardTrack() {
+        val toStop = synchronized(cardTrackLock) {
+            val prev = activeCardTrack
+            activeCardTrack = null
+            prev
+        }
+        toStop?.let { stopAndReleaseTrack(it) }
+    }
+
+    private fun releaseSpecificCardTrack(track: AudioTrack) {
+        val shouldRelease = synchronized(cardTrackLock) {
+            if (activeCardTrack === track) {
+                activeCardTrack = null
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldRelease) {
+            stopAndReleaseTrack(track)
+        }
+    }
+
+    private fun stopAndReleaseTrack(track: AudioTrack) {
+        try {
+            track.pause()
+            track.flush()
+            track.stop()
+        } catch (_: Exception) {
+        }
+        try {
+            track.release()
+        } catch (_: Exception) {
+        }
     }
 
     private fun releaseActiveTrack() {
@@ -368,12 +844,20 @@ object SoundEffectsManager {
         }
 
         val byteCount = pcm.size * 2
+        val boostedVolume = (volume * 1.45).coerceAtMost(0.55)
+        if (boostedVolume > volume) {
+            for (k in pcm.indices) {
+                val amplified = (pcm[k] * (boostedVolume / volume.coerceAtLeast(0.01))).toInt()
+                    .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+                pcm[k] = amplified
+            }
+        }
         val track = try {
             AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build()
                 )
                 .setAudioFormat(

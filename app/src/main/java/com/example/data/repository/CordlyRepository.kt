@@ -47,6 +47,24 @@ data class UserBootstrapResult(
     val isNewAccount: Boolean
 )
 
+data class PromoRedeemResult(
+    val code: String,
+    val awardedPoints: Long,
+    val claimRank: Int,
+    val maxClaims: Int
+)
+
+enum class PromoClaimErrorReason {
+    ALREADY_CLAIMED,
+    LIMIT_REACHED,
+    INVALID_CODE
+}
+
+class PromoClaimException(
+    val reason: PromoClaimErrorReason,
+    message: String
+) : IllegalStateException(message)
+
 class CordlyRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth = Firebase.auth
@@ -135,6 +153,7 @@ class CordlyRepository(
                     put("lastDailyClaimAtMs", 0L)
                     put("channelRewardClaimed", false)
                     put("claimedCustomQuests", emptyList<String>())
+                    put("claimedPromoCodes", emptyList<String>())
                     put("createdAt", FieldValue.serverTimestamp())
                     put("updatedAt", FieldValue.serverTimestamp())
                 }
@@ -242,6 +261,7 @@ class CordlyRepository(
                 lastDailyClaimAtMs = existingUser?.lastDailyClaimAtMs ?: 0L,
                 channelRewardClaimed = existingUser?.channelRewardClaimed ?: false,
                 claimedCustomQuests = existingUser?.claimedCustomQuests ?: emptyList(),
+                claimedPromoCodes = existingUser?.claimedPromoCodes ?: emptyList(),
                 createdAt = Timestamp.now(),
                 updatedAt = Timestamp.now()
             )
@@ -915,6 +935,112 @@ class CordlyRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, userRef.path, auth)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun redeemSecretPromoCode(rawCode: String): Result<PromoRedeemResult> {
+        val uid = requireUserId()
+        val cleanCode = rawCode.trim()
+        if (cleanCode != SECRET_PROMO_CODE_12340) {
+            return Result.failure(
+                PromoClaimException(
+                    PromoClaimErrorReason.INVALID_CODE,
+                    "كود غير صحيح / Invalid code."
+                )
+            )
+        }
+        val userRef = db.collection("users").document(uid)
+        val promoRef = db.collection("promo_codes").document(SECRET_PROMO_DOC_ID)
+        return try {
+            val result = db.runTransaction { tx ->
+                // Read BOTH documents before any writes (Firestore transaction invariant)
+                val userSnap = tx.get(userRef)
+                val promoSnap = tx.get(promoRef)
+
+                val currentUser = userSnap.toObject(UserPrivate::class.java)
+                    ?: throw IllegalStateException("Profile not found")
+
+                if (currentUser.claimedPromoCodes.contains(SECRET_PROMO_CODE_12340)) {
+                    throw PromoClaimException(
+                        PromoClaimErrorReason.ALREADY_CLAIMED,
+                        "لقد قمت باستخدام هذا الكود السري مسبقاً! (تم استلام 20000 نقطة بالفعل)"
+                    )
+                }
+
+                val newRank: Int
+                if (!promoSnap.exists()) {
+                    newRank = 1
+                    tx.set(
+                        promoRef,
+                        mapOf(
+                            "code" to SECRET_PROMO_CODE_12340,
+                            "rewardPoints" to SECRET_PROMO_REWARD_PEY,
+                            "maxClaims" to SECRET_PROMO_MAX_CLAIMS,
+                            "claimedCount" to 1L,
+                            "claimedUids" to listOf(uid),
+                            "createdAt" to FieldValue.serverTimestamp(),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                } else {
+                    val claimedCount = promoSnap.getLong("claimedCount") ?: 0L
+                    val maxClaims = promoSnap.getLong("maxClaims") ?: SECRET_PROMO_MAX_CLAIMS
+                    val claimedUids = (promoSnap.get("claimedUids") as? List<*>)
+                        ?.mapNotNull { it as? String }
+                        ?: emptyList()
+
+                    if (claimedUids.contains(uid)) {
+                        throw PromoClaimException(
+                            PromoClaimErrorReason.ALREADY_CLAIMED,
+                            "لقد قمت باستخدام هذا الكود السري مسبقاً!"
+                        )
+                    }
+                    if (claimedCount >= maxClaims || claimedUids.size >= maxClaims.toInt()) {
+                        throw PromoClaimException(
+                            PromoClaimErrorReason.LIMIT_REACHED,
+                            "عذراً! انتهى الكود السري — لقد وصل إلى الحد الأقصى لأول 50 شخصاً."
+                        )
+                    }
+                    newRank = (claimedCount + 1L).toInt()
+                    tx.update(
+                        promoRef,
+                        mapOf(
+                            "claimedCount" to (claimedCount + 1L),
+                            "claimedUids" to (claimedUids + uid),
+                            "rewardPoints" to SECRET_PROMO_REWARD_PEY,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                }
+
+                val nextBalance = currentUser.peyPoints + SECRET_PROMO_REWARD_PEY
+                val nextPromoList = (currentUser.claimedPromoCodes + SECRET_PROMO_CODE_12340)
+                    .distinct()
+                    .take(50)
+                tx.update(
+                    userRef,
+                    mapOf(
+                        "peyPoints" to nextBalance,
+                        "claimedPromoCodes" to nextPromoList,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+
+                PromoRedeemResult(
+                    code = SECRET_PROMO_CODE_12340,
+                    awardedPoints = SECRET_PROMO_REWARD_PEY,
+                    claimRank = newRank,
+                    maxClaims = SECRET_PROMO_MAX_CLAIMS.toInt()
+                )
+            }.await()
+            Result.success(result)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: PromoClaimException) {
+            Result.failure(e)
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, promoRef.path, auth)
             Result.failure(e)
         }
     }
@@ -2469,6 +2595,10 @@ class CordlyRepository(
         const val CHANNEL_REWARD_PEY_POINTS = 200L
         const val CREATOR_CHANNEL_NAME = "fire ax9"
         const val OWNER_NAME_REWARD_PEY = 9_000_000L
+        const val SECRET_PROMO_CODE_12340 = "12340"
+        const val SECRET_PROMO_DOC_ID = "secret_12340"
+        const val SECRET_PROMO_REWARD_PEY = 20000L
+        const val SECRET_PROMO_MAX_CLAIMS = 50L
         const val ONE_DAY_MS = 24L * 60L * 60L * 1000L
 
         fun isOwnerChannelNameMatch(name: String?): Boolean {

@@ -1,6 +1,7 @@
 package com.example.ui.cordly
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -216,15 +217,31 @@ fun NeovAiDialog(
     }
 
     fun launchTakePhoto() {
-        val uri = createTempUri("neov_ai_photo", ".jpg")
-        pendingCameraPhotoUri = uri
-        takePhotoLauncher.launch(uri)
+        try {
+            val uri = createTempUri("neov_ai_photo", ".jpg")
+            pendingCameraPhotoUri = uri
+            takePhotoLauncher.launch(uri)
+        } catch (_: Exception) {
+            android.widget.Toast.makeText(
+                context,
+                if (isArabic) "تعذر فتح الكاميرا على هذا الجهاز" else "Unable to open camera on this device",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     fun launchCaptureVideo() {
-        val uri = createTempUri("neov_ai_video", ".mp4")
-        pendingCameraVideoUri = uri
-        captureVideoLauncher.launch(uri)
+        try {
+            val uri = createTempUri("neov_ai_video", ".mp4")
+            pendingCameraVideoUri = uri
+            captureVideoLauncher.launch(uri)
+        } catch (_: Exception) {
+            android.widget.Toast.makeText(
+                context,
+                if (isArabic) "تعذر فتح كاميرا الفيديو على هذا الجهاز" else "Unable to open video camera on this device",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     fun startUnlimitedAudioCapture() {
@@ -395,6 +412,9 @@ fun NeovAiDialog(
                 val errState = uiState as? NeovAiUiState.Error
                 AnimatedVisibility(visible = errState != null) {
                     if (errState != null) {
+                        val isBillingError = errState.message.contains("free tier", ignoreCase = true) ||
+                            errState.message.contains("billing", ignoreCase = true) ||
+                            errState.message.contains("project-unavailable", ignoreCase = true)
                         Surface(
                             color = CordlyCrimson.copy(alpha = 0.2f),
                             border = BorderStroke(1.dp, CordlyCrimson),
@@ -403,39 +423,78 @@ fun NeovAiDialog(
                                 .fillMaxWidth()
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(10.dp)
-                            ) {
-                                Text(
-                                    text = errState.message,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFFFCA5A5),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    color = NeovAiRed,
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { aiViewModel.retryLastMessage() }
-                                        .testTag("neov_ai_retry_button")
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(
-                                        text = if (isArabic) "إعادة" else "Retry",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        if (isBillingError && isArabic) {
+                                            Text(
+                                                text = "الباقة المجانية لـ Gemini API غير متاحة لهذا المشروع حالياً. فعّل الفوترة (Billing) في Google AI Studio ليعمل الذكاء الاصطناعي:",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                        }
+                                        Text(
+                                            text = errState.message,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFFFCA5A5)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        color = NeovAiRed,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { aiViewModel.retryLastMessage() }
+                                            .testTag("neov_ai_retry_button")
+                                    ) {
+                                        Text(
+                                            text = if (isArabic) "إعادة" else "Retry",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { aiViewModel.dismissError() },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Rounded.Close, contentDescription = "Dismiss error", tint = Color.White, modifier = Modifier.size(16.dp))
+                                    }
                                 }
-                                Spacer(modifier = Modifier.width(4.dp))
-                                IconButton(
-                                    onClick = { aiViewModel.dismissError() },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(Icons.Rounded.Close, contentDescription = "Dismiss error", tint = Color.White, modifier = Modifier.size(16.dp))
+                                if (isBillingError) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Surface(
+                                        color = NeovAiYellow.copy(alpha = 0.18f),
+                                        border = BorderStroke(1.dp, NeovAiYellow),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                try {
+                                                    context.startActivity(
+                                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://ai.studio.google.com/billing"))
+                                                    )
+                                                } catch (_: Exception) {
+                                                }
+                                            }
+                                            .testTag("neov_ai_open_billing_button")
+                                    ) {
+                                        Text(
+                                            text = if (isArabic) "فتح صفحة الفوترة في Google AI Studio" else "Open Google AI Studio Billing",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = NeovAiYellow,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
+                                    }
                                 }
                             }
                         }

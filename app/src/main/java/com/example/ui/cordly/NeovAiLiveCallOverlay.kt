@@ -18,6 +18,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import com.example.R
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -130,6 +131,9 @@ fun NeovAiLiveCallOverlay(
 
     var isCameraEnabled by remember { mutableStateOf(true) }
     var useFrontCamera by remember { mutableStateOf(false) }
+    var cameraBindError by remember { mutableStateOf<String?>(null) }
+    var isCameraReady by remember { mutableStateOf(false) }
+    var cameraRetryTick by remember { mutableIntStateOf(0) }
     var isMuted by remember { mutableStateOf(false) }
     var isSpeaking by remember { mutableStateOf(false) }
     var isSpeechListening by remember { mutableStateOf(false) }
@@ -266,7 +270,11 @@ fun NeovAiLiveCallOverlay(
             override fun onEvent(eventType: Int, params: Bundle?) {}
         }
         val lifecycleObserver = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (hasPermissions && isCameraEnabled && !isCameraReady) {
+                    cameraRetryTick++
+                }
+            } else if (event == Lifecycle.Event.ON_STOP) {
                 isDirectRecording = false
                 isSpeaking = false
                 isSpeechListening = false
@@ -335,16 +343,21 @@ fun NeovAiLiveCallOverlay(
                 if (hasPermissions && isCameraEnabled) {
                     val previewView = remember(context) {
                         PreviewView(context).apply {
+                            id = R.id.neov_live_camera_preview
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                             scaleType = PreviewView.ScaleType.FILL_CENTER
                         }
                     }
 
-                    DisposableEffect(lifecycleOwner, useFrontCamera, isCameraEnabled) {
+                    DisposableEffect(lifecycleOwner, useFrontCamera, isCameraEnabled, cameraRetryTick) {
+                        isCameraReady = false
+                        cameraBindError = null
                         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
                         val mainExecutor = ContextCompat.getMainExecutor(context)
                         var boundProvider: ProcessCameraProvider? = null
+                        var cancelled = false
                         cameraProviderFuture.addListener({
+                            if (cancelled) return@addListener
                             try {
                                 val provider = cameraProviderFuture.get()
                                 boundProvider = provider
@@ -376,18 +389,42 @@ fun NeovAiLiveCallOverlay(
                                             }
                                         }
                                     }
-                                val selector = if (useFrontCamera) {
+
+                                val preferred = if (useFrontCamera) {
                                     CameraSelector.DEFAULT_FRONT_CAMERA
                                 } else {
                                     CameraSelector.DEFAULT_BACK_CAMERA
                                 }
+                                val alternate = if (useFrontCamera) {
+                                    CameraSelector.DEFAULT_BACK_CAMERA
+                                } else {
+                                    CameraSelector.DEFAULT_FRONT_CAMERA
+                                }
+
+                                val selector = when {
+                                    provider.hasCamera(preferred) -> preferred
+                                    provider.hasCamera(alternate) -> alternate
+                                    else -> CameraSelector.Builder().build()
+                                }
+
                                 provider.unbindAll()
-                                provider.bindToLifecycle(lifecycleOwner, selector, preview, analysis)
-                            } catch (_: Exception) {
+                                try {
+                                    provider.bindToLifecycle(lifecycleOwner, selector, preview, analysis)
+                                } catch (dualBindErr: Exception) {
+                                    provider.unbindAll()
+                                    provider.bindToLifecycle(lifecycleOwner, selector, preview)
+                                }
+                                isCameraReady = true
+                                cameraBindError = null
+                            } catch (e: Exception) {
+                                isCameraReady = false
+                                cameraBindError = e.localizedMessage
+                                    ?: if (isArabic) "تعذر تشغيل الكاميرا على هذا الجهاز" else "Unable to open camera on this device"
                             }
                         }, mainExecutor)
 
                         onDispose {
+                            cancelled = true
                             try {
                                 boundProvider?.unbindAll()
                             } catch (_: Exception) {
@@ -399,6 +436,51 @@ fun NeovAiLiveCallOverlay(
                         factory = { previewView },
                         modifier = Modifier.fillMaxSize()
                     )
+
+                    if (!isCameraReady && cameraBindError != null) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.72f))
+                                .padding(24.dp)
+                        ) {
+                            Surface(
+                                color = Color(0xFF1F1215),
+                                shape = RoundedCornerShape(18.dp),
+                                border = BorderStroke(1.dp, NeovAiRed)
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.padding(18.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.VideocamOff,
+                                        contentDescription = null,
+                                        tint = NeovAiYellow,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                    Text(
+                                        text = cameraBindError.orEmpty(),
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Button(
+                                        onClick = { cameraRetryTick++ },
+                                        colors = ButtonDefaults.buttonColors(containerColor = NeovAiRed),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.testTag("neov_live_retry_camera_button")
+                                    ) {
+                                        Text(
+                                            text = if (isArabic) "إعادة تشغيل الكاميرا" else "Retry Camera",
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } else {
                     // Ambient Red & Yellow backdrop when camera is off or awaiting permissions
                     Box(
@@ -504,17 +586,33 @@ fun NeovAiLiveCallOverlay(
                         .align(Alignment.Center)
                         .padding(horizontal = 20.dp)
                 ) {
+                    val errText = liveError.orEmpty()
+                    val isBillingErr = errText.contains("free tier", ignoreCase = true) ||
+                        errText.contains("billing", ignoreCase = true) ||
+                        errText.contains("project-unavailable", ignoreCase = true)
                     Surface(
                         color = CordlyCrimson.copy(alpha = 0.9f),
                         shape = RoundedCornerShape(16.dp),
                         border = BorderStroke(1.dp, NeovAiYellow)
                     ) {
-                        Text(
-                            text = liveError.orEmpty(),
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodyMedium,
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.padding(14.dp)
-                        )
+                        ) {
+                            if (isBillingErr && isArabic) {
+                                Text(
+                                    text = "الباقة المجانية لـ Gemini API غير متاحة لهذا المشروع حالياً. فعّل الفوترة من Google AI Studio.",
+                                    color = NeovAiYellow,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Text(
+                                text = errText,
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
                     }
                 }
 

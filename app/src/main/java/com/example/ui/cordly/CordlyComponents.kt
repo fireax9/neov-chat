@@ -349,7 +349,7 @@ fun UserAvatar(
             initialValue = 0f,
             targetValue = 360f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 2600, easing = LinearEasing),
+                animation = tween(durationMillis = 10000, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart
             ),
             label = "frameRotation"
@@ -358,16 +358,16 @@ fun UserAvatar(
             initialValue = 360f,
             targetValue = 0f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 4200, easing = LinearEasing),
+                animation = tween(durationMillis = 14000, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart
             ),
             label = "frameCounterRotation"
         )
         val pulse by transition.animateFloat(
-            initialValue = 0.28f,
-            targetValue = 0.78f,
+            initialValue = 0.25f,
+            targetValue = 0.65f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 1200, easing = LinearEasing),
+                animation = tween(durationMillis = 3200, easing = LinearEasing),
                 repeatMode = RepeatMode.Reverse
             ),
             label = "framePulse"
@@ -425,18 +425,6 @@ fun UserAvatar(
                                         brush = sweepBrush,
                                         style = Stroke(width = strokePx)
                                     )
-                                }
-                                if (frame.animated) {
-                                    rotate(counterRotation * 0.5f) {
-                                        for (corner in 0..3) {
-                                            val ang = (corner * 90.0) * PI / 180.0
-                                            val pt = Offset(
-                                                centerOffset.x + ringRadius * cos(ang).toFloat(),
-                                                centerOffset.y + ringRadius * sin(ang).toFloat()
-                                            )
-                                            drawCircle(Color.White, radius = (strokePx * 0.72f).coerceAtLeast(2f), center = pt)
-                                        }
-                                    }
                                 }
                             }
                             FrameShapeStyle.PRISM_DIAMOND -> {
@@ -550,6 +538,107 @@ fun UserAvatar(
                                     }
                                 }
                             }
+                            FrameShapeStyle.LEGENDARY_NEON -> {
+                                // Stationary sculpted futuristic neon chassis + cyber wings + breathing plasma bloom (no wheel spin)
+                                val neonCyan = Color(0xFF00F5FF)
+                                val neonIndigo = Color(0xFF6366F1)
+                                val neonPink = Color(0xFFEC4899)
+                                val phaseRad = rotationAngle * PI.toFloat() / 180f
+                                val breath = 0.55f + 0.45f * sin(phaseRad * 2f)
+
+                                // 1. Soft Neon Corona Aura Halo
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            neonCyan.copy(alpha = 0.36f + 0.14f * breath),
+                                            neonPink.copy(alpha = 0.22f + 0.10f * pulseScale),
+                                            Color.Transparent
+                                        ),
+                                        center = centerOffset,
+                                        radius = ringRadius + strokePx * 2.2f
+                                    ),
+                                    radius = ringRadius + strokePx * 2.2f
+                                )
+
+                                // 2. Sculpted Chamfered Cyber-Hex Shield Chassis (stationary geometry, liquid sweeping gradient)
+                                val chassisPath = Path().apply {
+                                    val points = 12
+                                    for (i in 0 until points) {
+                                        val deg = i * (360.0 / points) - 90.0
+                                        val ang = deg * PI / 180.0
+                                        val r = if (i % 3 == 0) ringRadius * 1.07f else ringRadius * 0.97f
+                                        val px = centerOffset.x + r * cos(ang).toFloat()
+                                        val py = centerOffset.y + r * sin(ang).toFloat()
+                                        if (i == 0) moveTo(px, py) else lineTo(px, py)
+                                    }
+                                    close()
+                                }
+                                val liquidGrad = Brush.linearGradient(
+                                    colors = listOf(neonCyan, neonIndigo, neonPink, Color(0xFF22D3EE), neonCyan),
+                                    start = Offset(
+                                        centerOffset.x - ringRadius * cos(phaseRad),
+                                        centerOffset.y - ringRadius * sin(phaseRad)
+                                    ),
+                                    end = Offset(
+                                        centerOffset.x + ringRadius * cos(phaseRad),
+                                        centerOffset.y + ringRadius * sin(phaseRad)
+                                    )
+                                )
+                                // Outer diffused neon tube halo
+                                drawPath(
+                                    path = chassisPath,
+                                    brush = liquidGrad,
+                                    alpha = 0.38f + 0.16f * breath,
+                                    style = Stroke(width = strokePx * 2.15f, join = StrokeJoin.Round)
+                                )
+                                // Vivid main neon tube body
+                                drawPath(
+                                    path = chassisPath,
+                                    brush = liquidGrad,
+                                    style = Stroke(width = strokePx * 0.98f, join = StrokeJoin.Round)
+                                )
+                                // Razor-sharp white-hot glass core filament
+                                drawPath(
+                                    path = chassisPath,
+                                    color = Color.White.copy(alpha = 0.78f + 0.18f * breath),
+                                    style = Stroke(width = (strokePx * 0.28f).coerceAtLeast(1f), join = StrokeJoin.Round)
+                                )
+
+                                // 3. Four Stationary Cyber Energy Wings at Top, Bottom, Left, Right
+                                val wingReach = strokePx * (1.55f + 0.35f * breath)
+                                val wingHalfSpread = 0.24f
+                                for (k in 0 until 4) {
+                                    val baseAng = k * (PI.toFloat() * 0.5f) - (PI.toFloat() * 0.5f)
+                                    val wingTip = Offset(
+                                        centerOffset.x + (ringRadius + wingReach) * cos(baseAng),
+                                        centerOffset.y + (ringRadius + wingReach) * sin(baseAng)
+                                    )
+                                    val wingL = Offset(
+                                        centerOffset.x + (ringRadius * 0.99f) * cos(baseAng - wingHalfSpread),
+                                        centerOffset.y + (ringRadius * 0.99f) * sin(baseAng - wingHalfSpread)
+                                    )
+                                    val wingR = Offset(
+                                        centerOffset.x + (ringRadius * 0.99f) * cos(baseAng + wingHalfSpread),
+                                        centerOffset.y + (ringRadius * 0.99f) * sin(baseAng + wingHalfSpread)
+                                    )
+                                    val wingCol = if (k % 2 == 0) neonCyan else neonPink
+                                    val wingPath = Path().apply {
+                                        moveTo(wingL.x, wingL.y)
+                                        lineTo(wingTip.x, wingTip.y)
+                                        lineTo(wingR.x, wingR.y)
+                                    }
+                                    drawPath(
+                                        path = wingPath,
+                                        color = wingCol.copy(alpha = 0.40f + 0.20f * breath),
+                                        style = Stroke(width = strokePx * 1.15f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                    )
+                                    drawPath(
+                                        path = wingPath,
+                                        color = Color.White.copy(alpha = 0.90f),
+                                        style = Stroke(width = (strokePx * 0.34f).coerceAtLeast(1.1f), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                    )
+                                }
+                            }
                             FrameShapeStyle.CIRCLE_ORBIT -> {
                                 rotate(rotationAngle) {
                                     drawCircle(
@@ -564,42 +653,32 @@ fun UserAvatar(
                                         centerOffset.y - ringRadius
                                     )
                                     val arcSize = Size(ringRadius * 2f, ringRadius * 2f)
-                                    rotate(counterRotation) {
+                                    rotate(counterRotation * 0.45f) {
                                         drawArc(
-                                            color = Color.White.copy(alpha = 0.85f),
+                                            color = Color.White.copy(alpha = 0.55f),
                                             startAngle = 0f,
                                             sweepAngle = 42f,
                                             useCenter = false,
                                             topLeft = arcTopLeft,
                                             size = arcSize,
                                             style = Stroke(
-                                                width = strokePx * 0.65f,
+                                                width = strokePx * 0.55f,
                                                 cap = StrokeCap.Round
                                             )
                                         )
                                         drawArc(
-                                            color = secondaryGlow.copy(alpha = 0.9f),
+                                            color = secondaryGlow.copy(alpha = 0.65f),
                                             startAngle = 180f,
                                             sweepAngle = 42f,
                                             useCenter = false,
                                             topLeft = arcTopLeft,
                                             size = arcSize,
                                             style = Stroke(
-                                                width = strokePx * 0.65f,
+                                                width = strokePx * 0.55f,
                                                 cap = StrokeCap.Round
                                             )
                                         )
                                     }
-                                    val rad = Math.toRadians(rotationAngle.toDouble())
-                                    val orbCenter = Offset(
-                                        x = centerOffset.x + (ringRadius * cos(rad)).toFloat(),
-                                        y = centerOffset.y + (ringRadius * sin(rad)).toFloat()
-                                    )
-                                    drawCircle(
-                                        color = Color.White,
-                                        radius = (strokePx * 0.85f).coerceAtLeast(2.2f),
-                                        center = orbCenter
-                                    )
                                 }
                             }
                             FrameShapeStyle.SUKUNA_SHRINE_HANDS -> {
@@ -657,6 +736,209 @@ fun UserAvatar(
                                     )
                                 }
                             }
+                            FrameShapeStyle.DBZ_SUPER_SAIYAN -> {
+                                val ssjBrush = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFFFDE047).copy(alpha = 0.34f + 0.20f * pulseScale),
+                                        Color(0xFFF59E0B).copy(alpha = 0.20f),
+                                        Color.Transparent
+                                    ),
+                                    center = centerOffset,
+                                    radius = ringRadius + strokePx * 2.8f
+                                )
+                                drawCircle(brush = ssjBrush, radius = ringRadius + strokePx * 2.4f, center = centerOffset)
+                                rotate(rotationAngle * 0.45f) {
+                                    drawCircle(
+                                        brush = sweepBrush,
+                                        radius = ringRadius,
+                                        style = Stroke(width = strokePx * 1.1f)
+                                    )
+                                }
+                                val spikeCount = 14
+                                for (i in 0 until spikeCount) {
+                                    val deg = i * (360f / spikeCount) - 90f
+                                    val isTopCrown = i == 0 || i == 1 || i == spikeCount - 1
+                                    val spikeLen = strokePx * (if (isTopCrown) 2.6f else 1.55f + 0.45f * pulseScale)
+                                    val rad = deg * PI / 180.0
+                                    val lRad = (deg - 10f) * PI / 180.0
+                                    val rRad = (deg + 10f) * PI / 180.0
+                                    val path = Path().apply {
+                                        moveTo(
+                                            centerOffset.x + (ringRadius - strokePx * 0.2f) * cos(lRad).toFloat(),
+                                            centerOffset.y + (ringRadius - strokePx * 0.2f) * sin(lRad).toFloat()
+                                        )
+                                        lineTo(
+                                            centerOffset.x + (ringRadius + spikeLen) * cos(rad).toFloat(),
+                                            centerOffset.y + (ringRadius + spikeLen) * sin(rad).toFloat()
+                                        )
+                                        lineTo(
+                                            centerOffset.x + (ringRadius - strokePx * 0.2f) * cos(rRad).toFloat(),
+                                            centerOffset.y + (ringRadius - strokePx * 0.2f) * sin(rRad).toFloat()
+                                        )
+                                        close()
+                                    }
+                                    drawPath(
+                                        path = path,
+                                        color = if (isTopCrown || i % 2 == 0) Color(0xFFFDE047).copy(alpha = 0.92f)
+                                        else Color(0xFFF59E0B).copy(alpha = 0.85f)
+                                    )
+                                }
+                            }
+                            FrameShapeStyle.DBZ_KAMEHAMEHA -> {
+                                val auraBrush = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFF22D3EE).copy(alpha = 0.36f + 0.20f * pulseScale),
+                                        Color(0xFF0284C7).copy(alpha = 0.22f),
+                                        Color.Transparent
+                                    ),
+                                    center = centerOffset,
+                                    radius = ringRadius + strokePx * 2.6f
+                                )
+                                drawCircle(brush = auraBrush, radius = ringRadius + strokePx * 2.2f, center = centerOffset)
+                                rotate(rotationAngle * 0.6f) {
+                                    drawCircle(
+                                        brush = sweepBrush,
+                                        radius = ringRadius,
+                                        style = Stroke(width = strokePx * 1.15f)
+                                    )
+                                }
+                                rotate(counterRotation * 0.7f) {
+                                    drawCircle(
+                                        color = Color(0xFFE0F2FE).copy(alpha = 0.72f),
+                                        radius = ringRadius + strokePx * 0.65f,
+                                        style = Stroke(
+                                            width = strokePx * 0.42f,
+                                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f))
+                                        )
+                                    )
+                                }
+                            }
+                            FrameShapeStyle.JJK_GOJO_VOID -> {
+                                val voidBrush = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFFA855F7).copy(alpha = 0.34f + 0.18f * pulseScale),
+                                        Color(0xFF38BDF8).copy(alpha = 0.20f),
+                                        Color.Transparent
+                                    ),
+                                    center = centerOffset,
+                                    radius = ringRadius + strokePx * 2.6f
+                                )
+                                drawCircle(brush = voidBrush, radius = ringRadius + strokePx * 2.2f, center = centerOffset)
+                                rotate(rotationAngle * 0.55f) {
+                                    drawCircle(
+                                        brush = sweepBrush,
+                                        radius = ringRadius,
+                                        style = Stroke(width = strokePx * 1.12f)
+                                    )
+                                }
+                                rotate(counterRotation * 0.85f) {
+                                    val arcRectSize = Size(ringRadius * 2.08f, ringRadius * 2.08f)
+                                    val arcTopLeft = Offset(
+                                        centerOffset.x - ringRadius * 1.04f,
+                                        centerOffset.y - ringRadius * 1.04f
+                                    )
+                                    drawArc(
+                                        color = Color(0xFF38BDF8).copy(alpha = 0.90f),
+                                        startAngle = 10f,
+                                        sweepAngle = 70f,
+                                        useCenter = false,
+                                        topLeft = arcTopLeft,
+                                        size = arcRectSize,
+                                        style = Stroke(width = strokePx * 0.55f, cap = StrokeCap.Round)
+                                    )
+                                    drawArc(
+                                        color = Color(0xFFEF4444).copy(alpha = 0.90f),
+                                        startAngle = 190f,
+                                        sweepAngle = 70f,
+                                        useCenter = false,
+                                        topLeft = arcTopLeft,
+                                        size = arcRectSize,
+                                        style = Stroke(width = strokePx * 0.55f, cap = StrokeCap.Round)
+                                    )
+                                }
+                            }
+                            FrameShapeStyle.BLUELOCK_EGOIST -> {
+                                val egoBrush = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFF22D3EE).copy(alpha = 0.30f + 0.20f * pulseScale),
+                                        Color(0xFF1D4ED8).copy(alpha = 0.22f),
+                                        Color.Transparent
+                                    ),
+                                    center = centerOffset,
+                                    radius = ringRadius + strokePx * 2.5f
+                                )
+                                drawCircle(brush = egoBrush, radius = ringRadius + strokePx * 2.1f, center = centerOffset)
+                                val hexPath = Path().apply {
+                                    for (i in 0..7) {
+                                        val ang = (45.0 * i + 22.5) * PI / 180.0
+                                        val px = centerOffset.x + ringRadius * cos(ang).toFloat()
+                                        val py = centerOffset.y + ringRadius * sin(ang).toFloat()
+                                        if (i == 0) moveTo(px, py) else lineTo(px, py)
+                                    }
+                                    close()
+                                }
+                                rotate(rotationAngle * 0.30f) {
+                                    drawPath(hexPath, brush = sweepBrush, style = Stroke(width = strokePx * 1.15f))
+                                }
+                                // Blazing cyan egoist aura flames on top/sides
+                                for (i in 0 until 8) {
+                                    val deg = i * 45f - 90f + sin((rotationAngle * PI / 180.0)).toFloat() * 6f
+                                    val rad = deg * PI / 180.0
+                                    val lRad = (deg - 11f) * PI / 180.0
+                                    val rRad = (deg + 11f) * PI / 180.0
+                                    val flameTip = ringRadius + strokePx * (1.4f + 0.55f * pulseScale)
+                                    val p = Path().apply {
+                                        moveTo(
+                                            centerOffset.x + (ringRadius - strokePx * 0.15f) * cos(lRad).toFloat(),
+                                            centerOffset.y + (ringRadius - strokePx * 0.15f) * sin(lRad).toFloat()
+                                        )
+                                        lineTo(
+                                            centerOffset.x + flameTip * cos(rad).toFloat(),
+                                            centerOffset.y + flameTip * sin(rad).toFloat()
+                                        )
+                                        lineTo(
+                                            centerOffset.x + (ringRadius - strokePx * 0.15f) * cos(rRad).toFloat(),
+                                            centerOffset.y + (ringRadius - strokePx * 0.15f) * sin(rRad).toFloat()
+                                        )
+                                        close()
+                                    }
+                                    drawPath(p, color = if (i % 2 == 0) Color(0xFF22D3EE).copy(alpha = 0.88f) else Color(0xFF2563EB).copy(alpha = 0.85f))
+                                }
+                            }
+                            FrameShapeStyle.BLUELOCK_SPATIAL_FLOW -> {
+                                val spatialBrush = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFF10B981).copy(alpha = 0.28f + 0.18f * pulseScale),
+                                        Color(0xFF22D3EE).copy(alpha = 0.18f),
+                                        Color.Transparent
+                                    ),
+                                    center = centerOffset,
+                                    radius = ringRadius + strokePx * 2.5f
+                                )
+                                drawCircle(brush = spatialBrush, radius = ringRadius + strokePx * 2.0f, center = centerOffset)
+                                rotate(rotationAngle * 0.55f) {
+                                    drawCircle(
+                                        brush = sweepBrush,
+                                        radius = ringRadius,
+                                        style = Stroke(
+                                            width = strokePx * 1.05f,
+                                            cap = StrokeCap.Round,
+                                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(20f, 8f))
+                                        )
+                                    )
+                                }
+                                rotate(counterRotation * 0.65f) {
+                                    drawCircle(
+                                        color = Color(0xFF6EE7B7).copy(alpha = 0.82f),
+                                        radius = ringRadius + strokePx * 0.55f,
+                                        style = Stroke(
+                                            width = strokePx * 0.45f,
+                                            cap = StrokeCap.Round,
+                                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 14f))
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
                 } else {
@@ -690,92 +972,619 @@ fun UserAvatar(
                 }
             }
         }
-        if (frame.shapeStyle == FrameShapeStyle.SUKUNA_SHRINE_HANDS) {
-            // Foreground Malevolent Shrine fire crest + Sukuna Domain Expansion folded hands integrated into the frame
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val w = this.size.width
-                val h = this.size.height
-                val cx = w * 0.5f
-                val strokePx = frame.strokeDp.dp.toPx()
+        when (frame.shapeStyle) {
+            FrameShapeStyle.SUKUNA_SHRINE_HANDS -> {
+                // Foreground Malevolent Shrine fire crest + Sukuna Domain Expansion folded hands integrated into the frame
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = this.size.width
+                    val h = this.size.height
+                    val cx = w * 0.5f
+                    val strokePx = frame.strokeDp.dp.toPx()
 
-                // Lower rim blaze enveloping the wrists
-                val blazeBrush = Brush.verticalGradient(
-                    colors = listOf(Color(0xFFFDE047), Color(0xFFFF4500), Color(0xFF991B1B)),
-                    startY = h * 0.64f,
-                    endY = h
-                )
-                drawArc(
-                    brush = blazeBrush,
-                    startAngle = 22f,
-                    sweepAngle = 136f,
-                    useCenter = false,
-                    topLeft = Offset(strokePx * 0.45f, strokePx * 0.45f),
-                    size = Size(w - strokePx * 0.9f, h - strokePx * 0.9f),
-                    style = Stroke(width = strokePx * (1.0f + 0.25f * pulseScale), cap = StrokeCap.Round)
-                )
+                    // Lower rim blaze enveloping the wrists
+                    val blazeBrush = Brush.verticalGradient(
+                        colors = listOf(Color(0xFFFDE047), Color(0xFFFF4500), Color(0xFF991B1B)),
+                        startY = h * 0.64f,
+                        endY = h
+                    )
+                    drawArc(
+                        brush = blazeBrush,
+                        startAngle = 22f,
+                        sweepAngle = 136f,
+                        useCenter = false,
+                        topLeft = Offset(strokePx * 0.45f, strokePx * 0.45f),
+                        size = Size(w - strokePx * 0.9f, h - strokePx * 0.9f),
+                        style = Stroke(width = strokePx * (1.0f + 0.25f * pulseScale), cap = StrokeCap.Round)
+                    )
 
-                // Sukuna Domain Expansion hands (symmetric interlocking steeple mudra at bottom center of frame)
-                val handsY = h * 0.94f
-                val span = w * 0.23f
-                val spireH = h * 0.30f
-                val inkColor = Color(0xFF14090A)
-                val handFill = Color(0xFFFFF5EB)
-                val fireAccent = Color(0xFFFF4500)
+                    // Sukuna Domain Expansion hands (symmetric interlocking steeple mudra at bottom center of frame)
+                    val handsY = h * 0.94f
+                    val span = w * 0.23f
+                    val spireH = h * 0.30f
+                    val inkColor = Color(0xFF14090A)
+                    val handFill = Color(0xFFFFF5EB)
+                    val fireAccent = Color(0xFFFF4500)
 
-                val glowCircleRadius = span * (0.95f + 0.16f * pulseScale)
-                drawCircle(
-                    color = fireAccent.copy(alpha = 0.36f + 0.18f * pulseScale),
-                    radius = glowCircleRadius,
-                    center = Offset(cx, handsY - spireH * 0.38f)
-                )
+                    val glowCircleRadius = span * (0.95f + 0.16f * pulseScale)
+                    drawCircle(
+                        color = fireAccent.copy(alpha = 0.36f + 0.18f * pulseScale),
+                        radius = glowCircleRadius,
+                        center = Offset(cx, handsY - spireH * 0.38f)
+                    )
 
-                // Left hand & raised middle fingers
-                val leftHand = Path().apply {
-                    moveTo(cx - span * 1.15f, handsY)
-                    lineTo(cx - span * 0.56f, handsY - spireH * 0.56f)
-                    lineTo(cx - span * 0.04f, handsY - spireH)
-                    lineTo(cx + span * 0.02f, handsY - spireH * 0.54f)
-                    lineTo(cx - span * 0.28f, handsY - spireH * 0.14f)
-                    lineTo(cx - span * 0.85f, handsY + h * 0.02f)
-                    close()
+                    // Left hand & raised middle fingers
+                    val leftHand = Path().apply {
+                        moveTo(cx - span * 1.15f, handsY)
+                        lineTo(cx - span * 0.56f, handsY - spireH * 0.56f)
+                        lineTo(cx - span * 0.04f, handsY - spireH)
+                        lineTo(cx + span * 0.02f, handsY - spireH * 0.54f)
+                        lineTo(cx - span * 0.28f, handsY - spireH * 0.14f)
+                        lineTo(cx - span * 0.85f, handsY + h * 0.02f)
+                        close()
+                    }
+                    // Right hand & raised middle fingers
+                    val rightHand = Path().apply {
+                        moveTo(cx + span * 1.15f, handsY)
+                        lineTo(cx + span * 0.56f, handsY - spireH * 0.56f)
+                        lineTo(cx + span * 0.04f, handsY - spireH)
+                        lineTo(cx - span * 0.02f, handsY - spireH * 0.54f)
+                        lineTo(cx + span * 0.28f, handsY - spireH * 0.14f)
+                        lineTo(cx + span * 0.85f, handsY + h * 0.02f)
+                        close()
+                    }
+
+                    drawPath(leftHand, color = handFill)
+                    drawPath(rightHand, color = handFill)
+                    val inkStroke = Stroke(
+                        width = (w * 0.028f).coerceAtLeast(1.3f),
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round
+                    )
+                    drawPath(leftHand, color = inkColor, style = inkStroke)
+                    drawPath(rightHand, color = inkColor, style = inkStroke)
+
+                    // Sukuna curse wrist markings (double black bands)
+                    drawLine(
+                        color = inkColor,
+                        start = Offset(cx - span * 0.98f, handsY - spireH * 0.12f),
+                        end = Offset(cx - span * 0.62f, handsY - spireH * 0.03f),
+                        strokeWidth = (w * 0.028f).coerceAtLeast(1.3f),
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = inkColor,
+                        start = Offset(cx + span * 0.98f, handsY - spireH * 0.12f),
+                        end = Offset(cx + span * 0.62f, handsY - spireH * 0.03f),
+                        strokeWidth = (w * 0.028f).coerceAtLeast(1.3f),
+                        cap = StrokeCap.Round
+                    )
                 }
-                // Right hand & raised middle fingers
-                val rightHand = Path().apply {
-                    moveTo(cx + span * 1.15f, handsY)
-                    lineTo(cx + span * 0.56f, handsY - spireH * 0.56f)
-                    lineTo(cx + span * 0.04f, handsY - spireH)
-                    lineTo(cx - span * 0.02f, handsY - spireH * 0.54f)
-                    lineTo(cx + span * 0.28f, handsY - spireH * 0.14f)
-                    lineTo(cx + span * 0.85f, handsY + h * 0.02f)
-                    close()
-                }
-
-                drawPath(leftHand, color = handFill)
-                drawPath(rightHand, color = handFill)
-                val inkStroke = Stroke(
-                    width = (w * 0.028f).coerceAtLeast(1.3f),
-                    cap = StrokeCap.Round,
-                    join = StrokeJoin.Round
-                )
-                drawPath(leftHand, color = inkColor, style = inkStroke)
-                drawPath(rightHand, color = inkColor, style = inkStroke)
-
-                // Sukuna curse wrist markings (double black bands)
-                drawLine(
-                    color = inkColor,
-                    start = Offset(cx - span * 0.98f, handsY - spireH * 0.12f),
-                    end = Offset(cx - span * 0.62f, handsY - spireH * 0.03f),
-                    strokeWidth = (w * 0.028f).coerceAtLeast(1.3f),
-                    cap = StrokeCap.Round
-                )
-                drawLine(
-                    color = inkColor,
-                    start = Offset(cx + span * 0.98f, handsY - spireH * 0.12f),
-                    end = Offset(cx + span * 0.62f, handsY - spireH * 0.03f),
-                    strokeWidth = (w * 0.028f).coerceAtLeast(1.3f),
-                    cap = StrokeCap.Round
-                )
             }
+            FrameShapeStyle.DBZ_SUPER_SAIYAN -> {
+                // Integrated Super Saiyan golden ki flames, electric SSJ2 lightning bolts & center ki burst
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = this.size.width
+                    val h = this.size.height
+                    val cx = w * 0.5f
+
+                    // Translucent golden ki flames rising across bottom/sides into the center
+                    val leftKiFlame = Path().apply {
+                        moveTo(w * 0.14f, h * 0.84f)
+                        quadraticTo(w * 0.08f, h * 0.45f, w * 0.24f, h * 0.18f)
+                        quadraticTo(w * 0.22f, h * 0.48f, w * 0.36f, h * 0.72f)
+                        close()
+                    }
+                    val rightKiFlame = Path().apply {
+                        moveTo(w * 0.86f, h * 0.84f)
+                        quadraticTo(w * 0.92f, h * 0.45f, w * 0.76f, h * 0.18f)
+                        quadraticTo(w * 0.78f, h * 0.48f, w * 0.64f, h * 0.72f)
+                        close()
+                    }
+                    val kiBrush = Brush.verticalGradient(
+                        colors = listOf(Color(0xFFFDE047).copy(alpha = 0.68f), Color(0xFFF59E0B).copy(alpha = 0.34f)),
+                        startY = h * 0.15f,
+                        endY = h * 0.9f
+                    )
+                    drawPath(leftKiFlame, brush = kiBrush)
+                    drawPath(rightKiFlame, brush = kiBrush)
+
+                    // Top golden Super Saiyan spiked hair/aura silhouette crest integrated at upper center
+                    val crownCrest = Path().apply {
+                        moveTo(cx - w * 0.28f, h * 0.18f)
+                        lineTo(cx - w * 0.17f, h * 0.02f)
+                        lineTo(cx - w * 0.07f, h * 0.12f)
+                        lineTo(cx, -h * 0.02f)
+                        lineTo(cx + w * 0.07f, h * 0.12f)
+                        lineTo(cx + w * 0.17f, h * 0.02f)
+                        lineTo(cx + w * 0.28f, h * 0.18f)
+                        quadraticTo(cx, h * 0.10f, cx - w * 0.28f, h * 0.18f)
+                        close()
+                    }
+                    drawPath(crownCrest, color = Color(0xFFFDE047).copy(alpha = 0.92f))
+                    drawPath(
+                        crownCrest,
+                        color = Color(0xFF92400E),
+                        style = Stroke(width = (w * 0.02f).coerceAtLeast(1.1f), join = StrokeJoin.Round)
+                    )
+
+                    // Crackling cyan-white SSJ2 lightning arcs across the avatar foreground
+                    val boltL = Path().apply {
+                        moveTo(w * 0.15f, h * 0.46f)
+                        lineTo(w * 0.29f, h * 0.38f)
+                        lineTo(w * 0.24f, h * 0.56f)
+                        lineTo(w * 0.39f, h * 0.50f)
+                    }
+                    val boltR = Path().apply {
+                        moveTo(w * 0.85f, h * 0.38f)
+                        lineTo(w * 0.70f, h * 0.46f)
+                        lineTo(w * 0.76f, h * 0.60f)
+                        lineTo(w * 0.61f, h * 0.66f)
+                    }
+                    val boltGlow = Stroke(width = (w * 0.045f).coerceAtLeast(2.2f), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    val boltCore = Stroke(width = (w * 0.020f).coerceAtLeast(1.0f), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    drawPath(boltL, color = Color(0xFF22D3EE).copy(alpha = 0.82f), style = boltGlow)
+                    drawPath(boltL, color = Color.White, style = boltCore)
+                    drawPath(boltR, color = Color(0xFF22D3EE).copy(alpha = 0.82f), style = boltGlow)
+                    drawPath(boltR, color = Color.White, style = boltCore)
+
+                    // Center-bottom pulsing golden Ki burst star
+                    val starCy = h * 0.78f
+                    val outerR = w * (0.14f + 0.03f * pulseScale)
+                    val innerR = outerR * 0.34f
+                    val starPath = Path().apply {
+                        for (i in 0 until 8) {
+                            val r = if (i % 2 == 0) outerR else innerR
+                            val a = (i * 45.0) * PI / 180.0
+                            val px = cx + r * cos(a).toFloat()
+                            val py = starCy + r * sin(a).toFloat()
+                            if (i == 0) moveTo(px, py) else lineTo(px, py)
+                        }
+                        close()
+                    }
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color(0xFFFDE047).copy(alpha = 0.75f), Color.Transparent),
+                            center = Offset(cx, starCy),
+                            radius = outerR * 1.9f
+                        ),
+                        radius = outerR * 1.9f,
+                        center = Offset(cx, starCy)
+                    )
+                    drawPath(starPath, color = Color.White)
+                    drawPath(starPath, color = Color(0xFFF59E0B), style = Stroke(width = (w * 0.022f).coerceAtLeast(1.2f)))
+                }
+            }
+            FrameShapeStyle.DBZ_KAMEHAMEHA -> {
+                // Integrated Kamehameha surging blast beam, cupped energy hands & blazing blue-white core orb
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = this.size.width
+                    val h = this.size.height
+                    val cx = w * 0.5f
+                    val orbCy = h * 0.72f
+                    val orbCenter = Offset(cx, orbCy)
+
+                    // Surging upward Kamehameha plasma beam flaring from lower orb through center of avatar
+                    val beamPath = Path().apply {
+                        moveTo(cx - w * 0.09f, orbCy)
+                        lineTo(cx - w * 0.30f, h * 0.12f)
+                        quadraticTo(cx, h * 0.06f, cx + w * 0.30f, h * 0.12f)
+                        lineTo(cx + w * 0.09f, orbCy)
+                        close()
+                    }
+                    drawPath(
+                        path = beamPath,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF38BDF8).copy(alpha = 0.08f),
+                                Color(0xFF22D3EE).copy(alpha = 0.34f),
+                                Color.White.copy(alpha = 0.56f)
+                            ),
+                            startY = h * 0.10f,
+                            endY = orbCy
+                        )
+                    )
+
+                    // Twin kinetic shockwave ellipses tilted around the Kamehameha core
+                    val waveW = w * (0.48f + 0.06f * pulseScale)
+                    val waveH = h * (0.16f + 0.02f * pulseScale)
+                    val waveTopLeft = Offset(cx - waveW / 2f, orbCy - waveH / 2f)
+                    rotate(22f, pivot = orbCenter) {
+                        drawOval(
+                            color = Color(0xFF67E8F9).copy(alpha = 0.78f),
+                            topLeft = waveTopLeft,
+                            size = Size(waveW, waveH),
+                            style = Stroke(width = (w * 0.026f).coerceAtLeast(1.4f))
+                        )
+                    }
+                    rotate(-22f, pivot = orbCenter) {
+                        drawOval(
+                            color = Color.White.copy(alpha = 0.85f),
+                            topLeft = waveTopLeft,
+                            size = Size(waveW, waveH),
+                            style = Stroke(width = (w * 0.022f).coerceAtLeast(1.2f))
+                        )
+                    }
+
+                    // Stylized cupped hands charging the Kamehameha orb along the bottom edge
+                    val inkColor = Color(0xFF0C192C)
+                    val handColor = Color(0xFFE0F2FE)
+                    val palmSpan = w * 0.24f
+                    val palmLeft = Path().apply {
+                        moveTo(cx - palmSpan * 1.18f, h * 0.86f)
+                        quadraticTo(cx - palmSpan * 0.72f, h * 0.62f, cx - palmSpan * 0.35f, h * 0.68f)
+                        lineTo(cx - palmSpan * 0.24f, h * 0.88f)
+                        close()
+                    }
+                    val palmRight = Path().apply {
+                        moveTo(cx + palmSpan * 1.18f, h * 0.86f)
+                        quadraticTo(cx + palmSpan * 0.72f, h * 0.62f, cx + palmSpan * 0.35f, h * 0.68f)
+                        lineTo(cx + palmSpan * 0.24f, h * 0.88f)
+                        close()
+                    }
+                    drawPath(palmLeft, color = handColor)
+                    drawPath(palmRight, color = handColor)
+                    val handInk = Stroke(width = (w * 0.024f).coerceAtLeast(1.2f), join = StrokeJoin.Round)
+                    drawPath(palmLeft, color = inkColor, style = handInk)
+                    drawPath(palmRight, color = inkColor, style = handInk)
+
+                    // Luminous Kamehameha plasma core sphere in the lower-center foreground
+                    val orbRadius = w * (0.16f + 0.025f * pulseScale)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color.White,
+                                Color(0xFF67E8F9),
+                                Color(0xFF0284C7).copy(alpha = 0.85f),
+                                Color.Transparent
+                            ),
+                            center = orbCenter,
+                            radius = orbRadius * 1.9f
+                        ),
+                        radius = orbRadius * 1.9f,
+                        center = orbCenter
+                    )
+                    drawCircle(color = Color.White, radius = orbRadius * 0.68f, center = orbCenter)
+                }
+            }
+            FrameShapeStyle.JJK_GOJO_VOID -> {
+                // Integrated Gojo Six Eyes luminescence, Blue + Red clash orbs & Hollow Purple center core
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = this.size.width
+                    val h = this.size.height
+                    val cx = w * 0.5f
+
+                    // Upper Unlimited Void cosmic veil & twin luminous Six Eyes glints
+                    val eyeY = h * 0.28f
+                    val eyeOffset = w * 0.165f
+                    drawOval(
+                        color = Color(0xFF0F0720).copy(alpha = 0.34f),
+                        topLeft = Offset(w * 0.16f, h * 0.17f),
+                        size = Size(w * 0.68f, h * 0.21f)
+                    )
+                    for (side in listOf(-1f, 1f)) {
+                        val ex = cx + side * eyeOffset
+                        val eyeCenter = Offset(ex, eyeY)
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(Color(0xFF7DD3FC).copy(alpha = 0.90f), Color.Transparent),
+                                center = eyeCenter,
+                                radius = w * 0.12f
+                            ),
+                            radius = w * 0.12f,
+                            center = eyeCenter
+                        )
+                        // Sharp glowing anime eye almond silhouette
+                        val eyePath = Path().apply {
+                            moveTo(ex - w * 0.09f, eyeY)
+                            quadraticTo(ex, eyeY - h * 0.065f, ex + w * 0.09f, eyeY)
+                            quadraticTo(ex, eyeY + h * 0.065f, ex - w * 0.09f, eyeY)
+                            close()
+                        }
+                        drawPath(eyePath, color = Color(0xFF38BDF8))
+                        drawCircle(color = Color.White, radius = w * 0.032f, center = eyeCenter)
+                    }
+
+                    // Lower collision: Lapse Blue (left) + Reversal Red (right) -> Hollow Purple (center)
+                    val orbY = h * 0.77f
+                    val blueCenter = Offset(cx - w * 0.24f, orbY + h * 0.02f)
+                    val redCenter = Offset(cx + w * 0.24f, orbY + h * 0.02f)
+                    val purpleCenter = Offset(cx, orbY - h * 0.02f)
+
+                    // Merging attraction arcs
+                    drawArc(
+                        color = Color(0xFF38BDF8).copy(alpha = 0.85f),
+                        startAngle = 140f,
+                        sweepAngle = 120f,
+                        useCenter = false,
+                        topLeft = Offset(cx - w * 0.28f, orbY - h * 0.14f),
+                        size = Size(w * 0.56f, h * 0.24f),
+                        style = Stroke(width = (w * 0.022f).coerceAtLeast(1.2f), cap = StrokeCap.Round)
+                    )
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color.White, Color(0xFF38BDF8), Color.Transparent),
+                            center = blueCenter,
+                            radius = w * 0.13f
+                        ),
+                        radius = w * 0.13f,
+                        center = blueCenter
+                    )
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color.White, Color(0xFFEF4444), Color.Transparent),
+                            center = redCenter,
+                            radius = w * 0.13f
+                        ),
+                        radius = w * 0.13f,
+                        center = redCenter
+                    )
+
+                    // Hollow Purple central singularity orb
+                    val purpleR = w * (0.16f + 0.025f * pulseScale)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color.White,
+                                Color(0xFFD946EF),
+                                Color(0xFF7E22CE),
+                                Color.Transparent
+                            ),
+                            center = purpleCenter,
+                            radius = purpleR * 1.65f
+                        ),
+                        radius = purpleR * 1.65f,
+                        center = purpleCenter
+                    )
+                    drawCircle(
+                        color = Color(0xFFFAF5FF),
+                        radius = purpleR * 0.56f,
+                        center = purpleCenter
+                    )
+                    drawCircle(
+                        color = Color(0xFFA855F7),
+                        radius = purpleR * 0.92f,
+                        center = purpleCenter,
+                        style = Stroke(width = (w * 0.025f).coerceAtLeast(1.3f))
+                    )
+                }
+            }
+            FrameShapeStyle.BLUELOCK_EGOIST -> {
+                // Integrated Blue Lock glowing cyan striker speed arcs & blazing soccer ball in foreground (no eye!)
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = this.size.width
+                    val h = this.size.height
+                    val cx = w * 0.5f
+
+                    // Blazing cyan top striker speed-arc crown swooping toward the ball
+                    drawArc(
+                        brush = Brush.horizontalGradient(
+                            listOf(Color(0xFF1D4ED8), Color(0xFF22D3EE), Color.White)
+                        ),
+                        startAngle = 200f,
+                        sweepAngle = 140f,
+                        useCenter = false,
+                        topLeft = Offset(w * 0.14f, h * 0.08f),
+                        size = Size(w * 0.72f, h * 0.48f),
+                        style = Stroke(width = (w * 0.042f).coerceAtLeast(2f), cap = StrokeCap.Round)
+                    )
+
+                    // Blazing Blue Lock striker soccer ball at bottom center foreground
+                    val ballCy = h * 0.77f
+                    val ballCenter = Offset(cx, ballCy)
+                    val ballR = w * 0.165f
+
+                    // Roaring cyan aura flames wrapping left & right around the ball
+                    val flameWrap = Path().apply {
+                        moveTo(cx - ballR * 2.1f, ballCy - ballR * 0.35f)
+                        quadraticTo(cx - ballR * 1.1f, ballCy + ballR * 1.15f, cx, ballCy + ballR * 1.05f)
+                        quadraticTo(cx + ballR * 1.1f, ballCy + ballR * 1.15f, cx + ballR * 2.1f, ballCy - ballR * 0.35f)
+                        quadraticTo(cx + ballR * 1.2f, ballCy + ballR * 0.55f, cx, ballCy + ballR * 0.35f)
+                        quadraticTo(cx - ballR * 1.2f, ballCy + ballR * 0.55f, cx - ballR * 2.1f, ballCy - ballR * 0.35f)
+                        close()
+                    }
+                    drawPath(
+                        flameWrap,
+                        color = Color(0xFF22D3EE).copy(alpha = 0.85f)
+                    )
+
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color(0xFF22D3EE).copy(alpha = 0.62f), Color.Transparent),
+                            center = ballCenter,
+                            radius = ballR * 1.9f
+                        ),
+                        radius = ballR * 1.9f,
+                        center = ballCenter
+                    )
+
+                    // Soccer ball body & crisp dark pentagon seams
+                    drawCircle(color = Color(0xFFF8FAFC), radius = ballR, center = ballCenter)
+                    drawCircle(
+                        color = Color(0xFF0F172A),
+                        radius = ballR,
+                        center = ballCenter,
+                        style = Stroke(width = (w * 0.024f).coerceAtLeast(1.2f))
+                    )
+                    val pentagon = Path().apply {
+                        val pr = ballR * 0.44f
+                        for (i in 0..4) {
+                            val a = (i * 72.0 - 90.0) * PI / 180.0
+                            val px = cx + pr * cos(a).toFloat()
+                            val py = ballCy + pr * sin(a).toFloat()
+                            if (i == 0) moveTo(px, py) else lineTo(px, py)
+                        }
+                        close()
+                    }
+                    drawPath(pentagon, color = Color(0xFF0F172A))
+                    val seamStroke = (w * 0.018f).coerceAtLeast(1.0f)
+                    for (i in 0..4) {
+                        val a = (i * 72.0 - 90.0) * PI / 180.0
+                        drawLine(
+                            color = Color(0xFF0F172A),
+                            start = Offset(cx + ballR * 0.44f * cos(a).toFloat(), ballCy + ballR * 0.44f * sin(a).toFloat()),
+                            end = Offset(cx + ballR * 0.96f * cos(a).toFloat(), ballCy + ballR * 0.96f * sin(a).toFloat()),
+                            strokeWidth = seamStroke
+                        )
+                    }
+                }
+            }
+            FrameShapeStyle.BLUELOCK_SPATIAL_FLOW -> {
+                // Integrated Isagi Spatial Awareness puzzle pieces & Metavision grid across center/foreground
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = this.size.width
+                    val h = this.size.height
+                    val cx = w * 0.5f
+                    val cy = h * 0.5f
+
+                    // Subtle Metavision spatial trajectory arcs across center
+                    val lineStroke = (w * 0.018f).coerceAtLeast(1.0f)
+                    drawArc(
+                        color = Color(0xFF10B981).copy(alpha = 0.58f),
+                        startAngle = -35f,
+                        sweepAngle = 150f,
+                        useCenter = false,
+                        topLeft = Offset(w * 0.14f, h * 0.20f),
+                        size = Size(w * 0.72f, h * 0.62f),
+                        style = Stroke(width = lineStroke, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)))
+                    )
+                    drawLine(
+                        color = Color(0xFF22D3EE).copy(alpha = 0.46f),
+                        start = Offset(w * 0.16f, h * 0.66f),
+                        end = Offset(w * 0.84f, h * 0.30f),
+                        strokeWidth = lineStroke
+                    )
+
+                    // Helper to draw a sharp jigsaw puzzle piece centered at (px, py)
+                    fun drawPuzzlePiece(
+                        px: Float,
+                        py: Float,
+                        pieceSize: Float,
+                        deg: Float,
+                        fillColor: Color,
+                        edgeColor: Color
+                    ) {
+                        val half = pieceSize * 0.5f
+                        val tabR = pieceSize * 0.18f
+                        val p = Path().apply {
+                            moveTo(px - half, py - half)
+                            // Top edge with outward tab
+                            lineTo(px - tabR, py - half)
+                            cubicTo(
+                                px - tabR * 1.1f, py - half - tabR * 1.4f,
+                                px + tabR * 1.1f, py - half - tabR * 1.4f,
+                                px + tabR, py - half
+                            )
+                            lineTo(px + half, py - half)
+                            // Right edge with outward tab
+                            lineTo(px + half, py - tabR)
+                            cubicTo(
+                                px + half + tabR * 1.4f, py - tabR * 1.1f,
+                                px + half + tabR * 1.4f, py + tabR * 1.1f,
+                                px + half, py + tabR
+                            )
+                            lineTo(px + half, py + half)
+                            // Bottom straight edge
+                            lineTo(px - half, py + half)
+                            // Left edge with inward notch
+                            lineTo(px - half, py + tabR)
+                            cubicTo(
+                                px - half + tabR * 1.1f, py + tabR * 0.9f,
+                                px - half + tabR * 1.1f, py - tabR * 0.9f,
+                                px - half, py - tabR
+                            )
+                            close()
+                        }
+                        rotate(deg, pivot = Offset(px, py)) {
+                            drawPath(p, color = fillColor)
+                            drawPath(
+                                p,
+                                color = edgeColor,
+                                style = Stroke(width = (w * 0.024f).coerceAtLeast(1.2f), join = StrokeJoin.Round)
+                            )
+                        }
+                    }
+
+                    // Bottom-center anchor emerald/cyan puzzle piece locking in
+                    drawPuzzlePiece(
+                        px = cx,
+                        py = h * 0.77f,
+                        pieceSize = w * 0.25f,
+                        deg = 0f,
+                        fillColor = Color(0xFF047857).copy(alpha = 0.92f),
+                        edgeColor = Color(0xFF6EE7B7)
+                    )
+                    // Upper-left flying spatial piece
+                    drawPuzzlePiece(
+                        px = cx - w * 0.24f,
+                        py = h * 0.30f,
+                        pieceSize = w * 0.19f,
+                        deg = -18f + sin((rotationAngle * PI / 180.0)).toFloat() * 5f,
+                        fillColor = Color(0xFF0284C7).copy(alpha = 0.88f),
+                        edgeColor = Color(0xFF67E8F9)
+                    )
+                    // Mid-right assembling spatial piece
+                    drawPuzzlePiece(
+                        px = cx + w * 0.25f,
+                        py = h * 0.56f,
+                        pieceSize = w * 0.20f,
+                        deg = 16f - sin((rotationAngle * PI / 180.0)).toFloat() * 5f,
+                        fillColor = Color(0xFF059669).copy(alpha = 0.88f),
+                        edgeColor = Color(0xFFA7F3D0)
+                    )
+
+                    // Subtle glowing metavision center target ring
+                    drawCircle(
+                        color = Color(0xFF6EE7B7).copy(alpha = 0.55f + 0.20f * pulseScale),
+                        radius = w * 0.07f,
+                        center = Offset(cx, cy),
+                        style = Stroke(width = (w * 0.02f).coerceAtLeast(1.1f))
+                    )
+                }
+            }
+            FrameShapeStyle.LEGENDARY_NEON -> {
+                // Crisp 4-point neon starlight flares & diagonal rim gleam outside the center portrait
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = this.size.width
+                    val h = this.size.height
+                    val cx = w * 0.5f
+                    val cy = h * 0.5f
+                    val rimR = min(w, h) * 0.46f
+                    val phase = rotationAngle * PI.toFloat() / 180f
+
+                    val starPositions = listOf(45f, 135f, 225f, 315f)
+                    starPositions.forEachIndexed { idx, deg ->
+                        val ang = deg * PI.toFloat() / 180f
+                        val pt = Offset(cx + rimR * cos(ang), cy + rimR * sin(ang))
+                        val twinkle = 0.55f + 0.45f * sin(phase * 2f + idx * 1.4f)
+                        val r = (w * 0.068f * (0.75f + 0.35f * twinkle)).coerceAtLeast(2.2f)
+                        val starColor = if (idx % 2 == 0) Color(0xFF00F5FF) else Color(0xFFEC4899)
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(starColor.copy(alpha = 0.55f * twinkle), Color.Transparent),
+                                center = pt,
+                                radius = r * 2.1f
+                            ),
+                            radius = r * 2.1f,
+                            center = pt
+                        )
+                        drawLine(
+                            color = Color.White.copy(alpha = 0.92f * twinkle),
+                            start = Offset(pt.x - r, pt.y),
+                            end = Offset(pt.x + r, pt.y),
+                            strokeWidth = (w * 0.022f).coerceAtLeast(1.1f),
+                            cap = StrokeCap.Round
+                        )
+                        drawLine(
+                            color = Color.White.copy(alpha = 0.92f * twinkle),
+                            start = Offset(pt.x, pt.y - r),
+                            end = Offset(pt.x, pt.y + r),
+                            strokeWidth = (w * 0.022f).coerceAtLeast(1.1f),
+                            cap = StrokeCap.Round
+                        )
+                    }
+                }
+            }
+            else -> Unit
         }
         val artRes = frame.artworkResId
         if (artRes != null && size >= 38.dp) {

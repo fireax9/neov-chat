@@ -376,6 +376,7 @@ object AppAppearanceStore {
     private const val KEY_SOUND_MESSAGE = "sound_message_id"
     private const val KEY_SOUND_CALL_EVENT = "sound_call_event_id"
     private const val KEY_SOUND_NEO_PLUS_ALLOWED = "sound_neo_plus_allowed"
+    private const val KEY_SOUND_AUTO_ROTATE_STARTUP = "sound_auto_rotate_startup"
     private const val KEY_BG_SYNC_ENABLED = "background_sync_enabled"
     private const val CUSTOM_WALLPAPER_FILENAME = "custom_app_wallpaper.jpg"
 
@@ -537,13 +538,24 @@ object AppAppearanceStore {
             .putString(KEY_SOUND_RINGTONE, soundPrefs.ringtoneId)
             .putString(KEY_SOUND_MESSAGE, soundPrefs.messageId)
             .putString(KEY_SOUND_CALL_EVENT, soundPrefs.callEventId)
-            .apply()
+            .commit()
         return soundPrefs
+    }
+
+    fun loadAutoRotateStartupSound(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_SOUND_AUTO_ROTATE_STARTUP, false)
+    }
+
+    fun saveAutoRotateStartupSound(context: Context, enabled: Boolean): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(KEY_SOUND_AUTO_ROTATE_STARTUP, enabled).commit()
+        return enabled
     }
 
     fun loadNeoPlusSoundsEnabled(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getBoolean(KEY_SOUND_NEO_PLUS_ALLOWED, false)
+        return prefs.getBoolean(KEY_SOUND_NEO_PLUS_ALLOWED, true)
     }
 
     fun saveNeoPlusSoundsEnabled(context: Context, allowed: Boolean) {

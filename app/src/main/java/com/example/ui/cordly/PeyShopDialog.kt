@@ -3,6 +3,12 @@ package com.example.ui.cordly
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -70,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.model.PublicProfile
 import com.example.data.model.UserPrivate
 import com.example.data.repository.CordlyRepository
 import com.example.ui.theme.CordlyAmber
@@ -115,6 +122,27 @@ fun PeyShopDialog(
     var processingVideoError by remember { mutableStateOf<String?>(null) }
     var isProcessingVideo by remember { mutableStateOf(false) }
     var pendingUploadEffectId by remember { mutableStateOf("custom_video") }
+    var previewedCardFrame by remember { mutableStateOf<ProfileCardFrameItem?>(null) }
+
+    val shopCardInfinite = rememberInfiniteTransition(label = "shopCardShowcase")
+    val shopCardAngle by shopCardInfinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 10500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shopCardAngle"
+    )
+    val shopCardPulse by shopCardInfinite.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 0.72f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 3200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "shopCardPulse"
+    )
 
     val balance = profile?.peyPoints ?: 200L
     val currentRank = remember(profile?.rank, profile?.rankExpiresAtMs) {
@@ -327,6 +355,7 @@ fun PeyShopDialog(
                                 val rankUnlocked = hasRequiredRank(currentRank, frame.requiredRank)
                                 val rankTag = if (frame.requiredRank == CordlyRepository.RANK_NEO_PLUS) "NEO+" else "ULTRA"
 
+                                val isAnimeAudioAvatar = SoundEffectsManager.isAnimeSoundAvatar(frame.id)
                                 Surface(
                                     color = CordlyCardSurface,
                                     shape = RoundedCornerShape(16.dp),
@@ -334,7 +363,17 @@ fun PeyShopDialog(
                                         width = if (isEquipped) 1.5.dp else 1.dp,
                                         color = if (isEquipped) CordlyEmerald else CordlyDivider
                                     ),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(
+                                            if (isAnimeAudioAvatar) {
+                                                Modifier.clickable {
+                                                    SoundEffectsManager.playAvatarFrameSound(frame.id, context)
+                                                }
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
@@ -378,13 +417,50 @@ fun PeyShopDialog(
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = CordlyTextSecondary
                                             )
-                                            if (!isOwned) {
-                                                Text(
-                                                    text = "${frame.price} P E Y",
-                                                    style = MaterialTheme.typography.labelLarge,
-                                                    color = CordlyAmber,
-                                                    fontWeight = FontWeight.Bold
-                                                )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                if (!isOwned) {
+                                                    Text(
+                                                        text = "${frame.price} P E Y",
+                                                        style = MaterialTheme.typography.labelLarge,
+                                                        color = CordlyAmber,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                                if (isAnimeAudioAvatar) {
+                                                    val chipColor = frame.ringColors.firstOrNull() ?: CordlyCyan
+                                                    Surface(
+                                                        color = chipColor.copy(alpha = 0.16f),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        border = BorderStroke(1.dp, chipColor.copy(alpha = 0.55f)),
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .clickable {
+                                                                SoundEffectsManager.playAvatarFrameSound(frame.id, context)
+                                                            }
+                                                    ) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Rounded.PlayCircleFilled,
+                                                                contentDescription = null,
+                                                                tint = chipColor,
+                                                                modifier = Modifier.size(13.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(3.dp))
+                                                            Text(
+                                                                text = if (isArabic) "صوت 🔊" else "SFX 🔊",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = chipColor,
+                                                                fontWeight = FontWeight.SemiBold
+                                                            )
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
 
@@ -495,6 +571,17 @@ fun PeyShopDialog(
                                 val canAfford = balance >= cardFrame.price
                                 val rankUnlocked = hasRequiredRank(currentRank, cardFrame.requiredRank)
                                 val rankTag = if (cardFrame.requiredRank == CordlyRepository.RANK_NEO_PLUS) "NEO+" else "ULTRA"
+                                val cardShape = remember(cardFrame.id) { cardFrameShape(cardFrame.id) }
+                                val animatedBorders = remember(cardFrame.borderColors, shopCardAngle, cardFrame.id) {
+                                    if (cardFrame.id != "none" && cardFrame.borderColors.size >= 2) {
+                                        val shift = ((shopCardAngle / 360f) * cardFrame.borderColors.size).toInt() % cardFrame.borderColors.size
+                                        List(cardFrame.borderColors.size) { idx ->
+                                            cardFrame.borderColors[(idx + shift) % cardFrame.borderColors.size]
+                                        }
+                                    } else {
+                                        cardFrame.borderColors
+                                    }
+                                }
 
                                 Surface(
                                     color = CordlyCardSurface,
@@ -509,58 +596,120 @@ fun PeyShopDialog(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.padding(12.dp)
                                     ) {
-                                        // Mini Full Profile Card Preview (matches Profile Popup Card)
-                                        Surface(
-                                            color = CordlySurfaceDark,
-                                            shape = RoundedCornerShape(12.dp),
-                                            border = BorderStroke(2.dp, Brush.linearGradient(cardFrame.borderColors)),
+                                        // Mini Full Profile Card Preview with its OWN distinct architectural shape,
+                                        // live continuous interior animation & animated external aura outside the border!
+                                        Box(
+                                            contentAlignment = Alignment.Center,
                                             modifier = Modifier
-                                                .width(62.dp)
-                                                .height(78.dp)
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .clickable(onClick = onPreviewOwnProfile)
+                                                .width(88.dp)
+                                                .height(106.dp)
+                                                .clickable { previewedCardFrame = cardFrame }
+                                                .testTag("preview_card_frame_${cardFrame.id}")
                                         ) {
-                                            Box(modifier = Modifier.fillMaxSize()) {
-                                                if (cardFrame.artworkResId != null) {
-                                                    Image(
-                                                        painter = painterResource(cardFrame.artworkResId),
-                                                        contentDescription = cardFrame.title,
-                                                        contentScale = ContentScale.Crop,
-                                                        modifier = Modifier.fillMaxSize()
-                                                    )
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxSize()
-                                                            .background(Color.Black.copy(alpha = 0.32f))
-                                                    )
-                                                } else {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .height(26.dp)
-                                                            .background(Brush.horizontalGradient(cardFrame.borderColors))
-                                                    )
-                                                }
-                                                Box(
-                                                    modifier = Modifier
-                                                        .align(Alignment.CenterStart)
-                                                        .padding(start = 7.dp, top = 4.dp)
-                                                        .size(20.dp)
-                                                        .clip(CircleShape)
-                                                        .background(cardFrame.accentColor)
-                                                )
-                                                Box(
-                                                    modifier = Modifier
-                                                        .align(Alignment.BottomCenter)
-                                                        .padding(horizontal = 6.dp, vertical = 6.dp)
-                                                        .fillMaxWidth()
-                                                        .height(14.dp)
-                                                        .clip(RoundedCornerShape(4.dp))
-                                                        .background(Color.Black.copy(alpha = 0.55f))
+                                            if (cardFrame.id != "none") {
+                                                ProfileCardExternalAuraOverlay(
+                                                    cardFrameId = cardFrame.id,
+                                                    borderColors = cardFrame.borderColors,
+                                                    accentColor = cardFrame.accentColor,
+                                                    animAngle = shopCardAngle,
+                                                    pulse = shopCardPulse,
+                                                    introActive = false,
+                                                    introProgress = 0f,
+                                                    insetDp = 10.dp,
+                                                    modifier = Modifier.matchParentSize()
                                                 )
                                             }
+                                            Surface(
+                                                color = CordlySurfaceDark,
+                                                shape = cardShape,
+                                                border = BorderStroke(
+                                                    width = if (cardFrame.id != "none") 2.4.dp else 1.5.dp,
+                                                    brush = Brush.linearGradient(animatedBorders)
+                                                ),
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .padding(10.dp)
+                                            ) {
+                                                Box(modifier = Modifier.fillMaxSize()) {
+                                                    if (cardFrame.id == "card_bluelock_striker") {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .background(
+                                                                    Brush.verticalGradient(
+                                                                        listOf(Color(0xFF03102A), Color(0xFF0C2A5A), Color(0xFF04142B))
+                                                                    )
+                                                                )
+                                                        )
+                                                    } else if (cardFrame.artworkResId != null) {
+                                                        Image(
+                                                            painter = painterResource(cardFrame.artworkResId),
+                                                            contentDescription = cardFrame.title,
+                                                            contentScale = ContentScale.Crop,
+                                                            modifier = Modifier.fillMaxSize()
+                                                        )
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .background(Color.Black.copy(alpha = 0.28f))
+                                                        )
+                                                    } else {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .height(28.dp)
+                                                                .background(Brush.horizontalGradient(cardFrame.borderColors))
+                                                        )
+                                                    }
+
+                                                    if (cardFrame.id != "none") {
+                                                        ProfileCardAnimatedAmbientBackground(
+                                                            cardFrameId = cardFrame.id,
+                                                            accentColor = cardFrame.accentColor,
+                                                            animAngle = shopCardAngle,
+                                                            pulse = shopCardPulse,
+                                                            modifier = Modifier.fillMaxSize()
+                                                        )
+                                                    }
+
+                                                    if (isAnimeAnimatedCardFrame(cardFrame.id)) {
+                                                        Surface(
+                                                            color = Color.Black.copy(alpha = 0.78f),
+                                                            shape = RoundedCornerShape(6.dp),
+                                                            modifier = Modifier
+                                                                .align(Alignment.TopEnd)
+                                                                .padding(top = 8.dp, end = 6.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = cardEntranceDurationBadge(cardFrame.id),
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = cardFrame.accentColor,
+                                                                fontWeight = FontWeight.Bold,
+                                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .align(Alignment.CenterStart)
+                                                            .padding(start = 10.dp, top = 6.dp)
+                                                            .size(18.dp)
+                                                            .clip(CircleShape)
+                                                            .background(cardFrame.accentColor)
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .align(Alignment.BottomCenter)
+                                                            .padding(horizontal = 10.dp, vertical = 10.dp)
+                                                            .fillMaxWidth()
+                                                            .height(10.dp)
+                                                            .clip(RoundedCornerShape(4.dp))
+                                                            .background(Color.Black.copy(alpha = 0.55f))
+                                                    )
+                                                }
+                                            }
                                         }
-                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Spacer(modifier = Modifier.width(10.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                                 Text(
@@ -592,13 +741,46 @@ fun PeyShopDialog(
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = CordlyTextSecondary
                                             )
-                                            if (!isOwned) {
-                                                Text(
-                                                    text = "${cardFrame.price} P E Y",
-                                                    style = MaterialTheme.typography.labelLarge,
-                                                    color = CordlyAmber,
-                                                    fontWeight = FontWeight.Bold
-                                                )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                if (!isOwned) {
+                                                    Text(
+                                                        text = "${cardFrame.price} P E Y",
+                                                        style = MaterialTheme.typography.labelLarge,
+                                                        color = CordlyAmber,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                                Surface(
+                                                    color = cardFrame.accentColor.copy(alpha = 0.16f),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    border = BorderStroke(1.dp, cardFrame.accentColor.copy(alpha = 0.5f)),
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .clickable { previewedCardFrame = cardFrame }
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Rounded.PlayCircleFilled,
+                                                            contentDescription = null,
+                                                            tint = cardFrame.accentColor,
+                                                            modifier = Modifier.size(13.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(3.dp))
+                                                        Text(
+                                                            text = if (isArabic) "معاينة" else "Preview",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = cardFrame.accentColor,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                         Spacer(modifier = Modifier.width(8.dp))
@@ -839,6 +1021,36 @@ fun PeyShopDialog(
                 }
             }
         }
+    }
+
+    previewedCardFrame?.let { previewItem ->
+        DiscordProfileSheetDialog(
+            targetProfile = PublicProfile(
+                id = uid.ifBlank { "shop_preview" },
+                userId = uid.ifBlank { "shop_preview" },
+                displayName = profile?.displayName?.takeIf { it.isNotBlank() } ?: "You",
+                friendCode = profile?.friendCode ?: "",
+                status = profile?.status ?: "online",
+                photoUrl = profile?.photoUrl,
+                bannerUrl = profile?.bannerUrl,
+                customStatus = profile?.customStatus,
+                equippedFrame = equippedFrame,
+                equippedCardFrame = previewItem.id,
+                equippedProfileEffect = equippedEffect,
+                profileVideoData = profile?.profileVideoData,
+                avatarVideoData = profile?.avatarVideoData,
+                rank = currentRank,
+                rankExpiresAtMs = profile?.rankExpiresAtMs ?: 0L,
+                profileThemeColorHex = profile?.profileThemeColorHex
+            ),
+            fallbackName = profile?.displayName?.takeIf { it.isNotBlank() } ?: "You",
+            fallbackPhoto = profile?.photoUrl,
+            fallbackUserId = uid.ifBlank { "shop_preview" },
+            isOwnProfile = true,
+            isLoading = false,
+            onMessageUser = null,
+            onDismiss = { previewedCardFrame = null }
+        )
     }
 }
 
