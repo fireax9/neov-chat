@@ -331,7 +331,7 @@ fun ProfileCardExternalAuraOverlay(
             style = Stroke(width = inset * 0.48f * surgeBoost, join = StrokeJoin.Round)
         )
 
-        // 2. Crisp orbiting neon dashed aura path floating outside non-custom cards (skip for card_neon_blurple which renders twin smooth plasma tubes)
+        // 2. Smooth continuous secondary plasma rim + white-hot inner glass core outside card border
         if (cardFrameId != "card_neon_blurple") {
             val floatGap = inset * 0.34f
             val orbitPath = buildCardFramePath(
@@ -341,18 +341,26 @@ fun ProfileCardExternalAuraOverlay(
                 right = right + floatGap,
                 bottom = bottom + floatGap
             )
+            val waveGrad = Brush.linearGradient(
+                colors = listOf(accentColor, Color.White, gradColors.getOrElse(1) { accentColor }),
+                start = Offset(cx - (right - left) * 0.55f * cos(radPhase), top),
+                end = Offset(cx + (right - left) * 0.55f * cos(radPhase), bottom)
+            )
             drawPath(
                 path = orbitPath,
-                brush = Brush.linearGradient(
-                    colors = listOf(accentColor, Color.White, gradColors.getOrElse(1) { accentColor }),
-                    start = Offset(0f, cy + sin(radPhase) * (bottom - top) * 0.4f),
-                    end = Offset(size.width, cy - sin(radPhase) * (bottom - top) * 0.4f)
-                ),
-                alpha = 0.65f + 0.25f * pulse,
+                brush = waveGrad,
+                alpha = 0.55f + 0.25f * pulse,
                 style = Stroke(
-                    width = (inset * 0.13f).coerceAtLeast(1.8.dp.toPx()),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(38f, 16f, 14f, 16f), animAngle * 2.2f),
+                    width = (inset * 0.16f).coerceAtLeast(2.0.dp.toPx()),
                     cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                )
+            )
+            drawPath(
+                path = orbitPath,
+                color = Color.White.copy(alpha = 0.65f),
+                style = Stroke(
+                    width = (inset * 0.06f).coerceAtLeast(0.9.dp.toPx()),
                     join = StrokeJoin.Round
                 )
             )
@@ -538,11 +546,12 @@ fun ProfileCardExternalAuraOverlay(
                 }
             }
             else -> {
-                // External laser corner brackets & diamond stars outside the card
-                val bracketLen = inset * 0.9f
-                val off = inset * 0.45f
-                val bW = (inset * 0.14f).coerceAtLeast(1.8.dp.toPx())
-                val bColor = accentColor.copy(alpha = 0.78f + 0.22f * pulse)
+                // Sculpted cyber/royal corner wing brackets + glowing 4-point diamond flares outside the card
+                val bracketLen = inset * 0.92f
+                val off = inset * 0.44f
+                val bW = (inset * 0.16f).coerceAtLeast(2.0.dp.toPx())
+                val secColor = gradColors.getOrElse(1) { accentColor }
+                val bColor = accentColor.copy(alpha = 0.82f + 0.18f * pulse)
                 drawLine(bColor, Offset(left - off, top - off + bracketLen), Offset(left - off, top - off), bW, StrokeCap.Round)
                 drawLine(bColor, Offset(left - off, top - off), Offset(left - off + bracketLen, top - off), bW, StrokeCap.Round)
                 drawLine(bColor, Offset(right + off - bracketLen, top - off), Offset(right + off, top - off), bW, StrokeCap.Round)
@@ -551,6 +560,22 @@ fun ProfileCardExternalAuraOverlay(
                 drawLine(bColor, Offset(left - off, bottom + off), Offset(left - off + bracketLen, bottom + off), bW, StrokeCap.Round)
                 drawLine(bColor, Offset(right + off - bracketLen, bottom + off), Offset(right + off, bottom + off), bW, StrokeCap.Round)
                 drawLine(bColor, Offset(right + off, bottom + off - bracketLen), Offset(right + off, bottom + off), bW, StrokeCap.Round)
+                listOf(
+                    Offset(left - off, top - off),
+                    Offset(right + off, top - off),
+                    Offset(left - off, bottom + off),
+                    Offset(right + off, bottom + off)
+                ).forEachIndexed { idx, pt ->
+                    val tw = 0.55f + 0.45f * sin(radPhase * 2f + idx * 1.3f)
+                    val sr = inset * (0.28f + 0.10f * tw)
+                    drawCircle(
+                        brush = Brush.radialGradient(listOf((if (idx % 2 == 0) accentColor else secColor).copy(alpha = 0.55f * tw), Color.Transparent), pt, sr * 2f),
+                        radius = sr * 2f,
+                        center = pt
+                    )
+                    drawLine(Color.White.copy(alpha = 0.88f * tw), Offset(pt.x - sr, pt.y), Offset(pt.x + sr, pt.y), (inset * 0.08f).coerceAtLeast(1.1.dp.toPx()), StrokeCap.Round)
+                    drawLine(Color.White.copy(alpha = 0.88f * tw), Offset(pt.x, pt.y - sr), Offset(pt.x, pt.y + sr), (inset * 0.08f).coerceAtLeast(1.1.dp.toPx()), StrokeCap.Round)
+                }
             }
         }
     }

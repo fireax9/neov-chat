@@ -408,8 +408,23 @@ fun UserAvatar(
                             )
                         }
 
+                        val phaseRad = rotationAngle * PI.toFloat() / 180f
+                        val breath = 0.52f + 0.48f * sin(phaseRad * 2f)
+                        val liquidShiftBrush = Brush.linearGradient(
+                            colors = frame.ringColors.ifEmpty { listOf(primaryGlow, secondaryGlow, primaryGlow) },
+                            start = Offset(
+                                centerOffset.x - ringRadius * cos(phaseRad),
+                                centerOffset.y - ringRadius * sin(phaseRad)
+                            ),
+                            end = Offset(
+                                centerOffset.x + ringRadius * cos(phaseRad),
+                                centerOffset.y + ringRadius * sin(phaseRad)
+                            )
+                        )
+
                         when (frame.shapeStyle) {
                             FrameShapeStyle.OCTAGON_CYBER -> {
+                                // Stationary Armored Tactical Octagon Shield + Multi-Pass Neon Bloom + Cyber Corner Blades
                                 val octPath = Path().apply {
                                     for (i in 0..7) {
                                         val ang = (45.0 * i + 22.5) * PI / 180.0
@@ -419,32 +434,63 @@ fun UserAvatar(
                                     }
                                     close()
                                 }
-                                rotate(rotationAngle * 0.35f) {
-                                    drawPath(
-                                        path = octPath,
-                                        brush = sweepBrush,
-                                        style = Stroke(width = strokePx)
-                                    )
+                                drawPath(
+                                    path = octPath,
+                                    brush = liquidShiftBrush,
+                                    alpha = 0.36f + 0.16f * breath,
+                                    style = Stroke(width = strokePx * 2.0f, join = StrokeJoin.Round)
+                                )
+                                drawPath(
+                                    path = octPath,
+                                    brush = liquidShiftBrush,
+                                    style = Stroke(width = strokePx * 0.96f, join = StrokeJoin.Round)
+                                )
+                                drawPath(
+                                    path = octPath,
+                                    color = Color.White.copy(alpha = 0.72f + 0.16f * breath),
+                                    style = Stroke(width = (strokePx * 0.26f).coerceAtLeast(1f), join = StrokeJoin.Round)
+                                )
+                                // 4 Diagonal Cyber Armor Chevrons
+                                listOf(45f, 135f, 225f, 315f).forEachIndexed { idx, deg ->
+                                    val cAng = deg * PI.toFloat() / 180f
+                                    val span = 0.21f
+                                    val cReach = ringRadius + strokePx * (1.25f + 0.30f * breath)
+                                    val p1 = Offset(centerOffset.x + ringRadius * 0.96f * cos(cAng - span), centerOffset.y + ringRadius * 0.96f * sin(cAng - span))
+                                    val tip = Offset(centerOffset.x + cReach * cos(cAng), centerOffset.y + cReach * sin(cAng))
+                                    val p2 = Offset(centerOffset.x + ringRadius * 0.96f * cos(cAng + span), centerOffset.y + ringRadius * 0.96f * sin(cAng + span))
+                                    val chevron = Path().apply {
+                                        moveTo(p1.x, p1.y); lineTo(tip.x, tip.y); lineTo(p2.x, p2.y)
+                                    }
+                                    val col = if (idx % 2 == 0) primaryGlow else secondaryGlow
+                                    drawPath(chevron, color = col.copy(alpha = 0.55f + 0.25f * breath), style = Stroke(width = strokePx * 0.95f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                                    drawPath(chevron, color = Color.White.copy(alpha = 0.88f), style = Stroke(width = (strokePx * 0.28f).coerceAtLeast(1f), cap = StrokeCap.Round, join = StrokeJoin.Round))
                                 }
                             }
                             FrameShapeStyle.PRISM_DIAMOND -> {
-                                val diamondSide = ringRadius * 1.44f
+                                // Stationary Crystalline Ice Diamond Crest + Dual Faceted Prisms + Cardinal Ice Shards
+                                val diamondSide = ringRadius * 1.40f
                                 val boxTopLeft = Offset(
                                     centerOffset.x - diamondSide / 2f,
                                     centerOffset.y - diamondSide / 2f
                                 )
                                 val boxSize = Size(diamondSide, diamondSide)
-                                val cornerRad = CornerRadius(strokePx * 1.8f, strokePx * 1.8f)
-                                rotate(rotationAngle * 0.5f) {
-                                    drawRoundRect(
-                                        brush = sweepBrush,
-                                        topLeft = boxTopLeft,
-                                        size = boxSize,
-                                        cornerRadius = cornerRad,
-                                        style = Stroke(width = strokePx * 0.92f)
-                                    )
-                                }
-                                rotate(counterRotation * 0.5f + 45f) {
+                                val cornerRad = CornerRadius(strokePx * 1.6f, strokePx * 1.6f)
+                                drawRoundRect(
+                                    brush = liquidShiftBrush,
+                                    topLeft = boxTopLeft,
+                                    size = boxSize,
+                                    cornerRadius = cornerRad,
+                                    alpha = 0.36f + 0.16f * breath,
+                                    style = Stroke(width = strokePx * 1.9f)
+                                )
+                                drawRoundRect(
+                                    brush = liquidShiftBrush,
+                                    topLeft = boxTopLeft,
+                                    size = boxSize,
+                                    cornerRadius = cornerRad,
+                                    style = Stroke(width = strokePx * 0.90f)
+                                )
+                                rotate(45f) {
                                     drawRoundRect(
                                         color = secondaryGlow.copy(alpha = 0.85f),
                                         topLeft = boxTopLeft,
@@ -452,90 +498,111 @@ fun UserAvatar(
                                         cornerRadius = cornerRad,
                                         style = Stroke(width = strokePx * 0.72f)
                                     )
+                                    drawRoundRect(
+                                        color = Color.White.copy(alpha = 0.78f * breath),
+                                        topLeft = boxTopLeft,
+                                        size = boxSize,
+                                        cornerRadius = cornerRad,
+                                        style = Stroke(width = (strokePx * 0.25f).coerceAtLeast(1f))
+                                    )
+                                }
+                                // 4 Stationary Ice Shard Tips at N/E/S/W
+                                for (k in 0 until 4) {
+                                    val ang = k * (PI.toFloat() * 0.5f) - (PI.toFloat() * 0.5f)
+                                    val shardPt = Offset(
+                                        centerOffset.x + (ringRadius + strokePx * 1.35f) * cos(ang),
+                                        centerOffset.y + (ringRadius + strokePx * 1.35f) * sin(ang)
+                                    )
+                                    drawCircle(
+                                        brush = Brush.radialGradient(listOf(Color.White, primaryGlow.copy(alpha = 0.7f), Color.Transparent), shardPt, strokePx * 1.5f),
+                                        radius = strokePx * 1.5f,
+                                        center = shardPt,
+                                        alpha = 0.75f + 0.25f * breath
+                                    )
                                 }
                             }
                             FrameShapeStyle.DOUBLE_STARBURST -> {
+                                // Stationary Mythic 12-Point Celestial Starburst Crest + Glowing Inner Jewel Ring
                                 val starPath = Path().apply {
                                     val points = 12
                                     for (i in 0 until points * 2) {
-                                        val rad = if (i % 2 == 0) ringRadius else ringRadius * 0.84f
-                                        val ang = (180.0 / points * i) * PI / 180.0
+                                        val rad = if (i % 2 == 0) ringRadius * 1.07f else ringRadius * 0.88f
+                                        val ang = (180.0 / points * i - 90.0) * PI / 180.0
                                         val px = centerOffset.x + rad * cos(ang).toFloat()
                                         val py = centerOffset.y + rad * sin(ang).toFloat()
                                         if (i == 0) moveTo(px, py) else lineTo(px, py)
                                     }
                                     close()
                                 }
-                                rotate(rotationAngle * 0.5f) {
-                                    drawPath(starPath, brush = sweepBrush, style = Stroke(width = strokePx * 0.9f))
-                                }
-                                if (frame.animated) {
-                                    rotate(counterRotation) {
-                                        drawCircle(
-                                            color = Color.White.copy(alpha = 0.72f),
-                                            radius = ringRadius * 0.86f,
-                                            style = Stroke(
-                                                width = strokePx * 0.45f,
-                                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 12f))
-                                            )
-                                        )
-                                    }
-                                }
+                                drawPath(starPath, brush = liquidShiftBrush, alpha = 0.36f + 0.18f * breath, style = Stroke(width = strokePx * 1.9f, join = StrokeJoin.Round))
+                                drawPath(starPath, brush = liquidShiftBrush, style = Stroke(width = strokePx * 0.92f, join = StrokeJoin.Round))
+                                drawPath(starPath, color = Color.White.copy(alpha = 0.75f + 0.20f * breath), style = Stroke(width = (strokePx * 0.25f).coerceAtLeast(1f), join = StrokeJoin.Round))
+                                drawCircle(
+                                    color = secondaryGlow.copy(alpha = 0.65f + 0.20f * breath),
+                                    radius = ringRadius * 0.87f,
+                                    style = Stroke(width = strokePx * 0.42f)
+                                )
                             }
                             FrameShapeStyle.FLAME_CROWN -> {
-                                rotate(rotationAngle * 0.65f) {
-                                    drawCircle(
-                                        brush = sweepBrush,
-                                        radius = ringRadius,
-                                        style = Stroke(width = strokePx)
-                                    )
-                                }
-                                val flareCount = 6
-                                rotate(counterRotation * 0.35f) {
-                                    for (i in 0 until flareCount) {
-                                        val ang = (360.0 / flareCount * i) * PI / 180.0
-                                        val pInner = Offset(
-                                            centerOffset.x + (ringRadius - strokePx * 0.4f) * cos(ang).toFloat(),
-                                            centerOffset.y + (ringRadius - strokePx * 0.4f) * sin(ang).toFloat()
-                                        )
-                                        val pOuter = Offset(
-                                            centerOffset.x + (ringRadius + strokePx * 1.45f) * cos(ang).toFloat(),
-                                            centerOffset.y + (ringRadius + strokePx * 1.45f) * sin(ang).toFloat()
-                                        )
-                                        drawLine(
-                                            color = if (i % 2 == 0) primaryGlow else Color.White,
-                                            start = pInner,
-                                            end = pOuter,
-                                            strokeWidth = strokePx * 0.85f,
-                                            cap = StrokeCap.Round
-                                        )
+                                // Stationary Royal Solar / Phoenix Flame Crown Crest (no spoked wagon-wheel spin)
+                                drawCircle(
+                                    brush = liquidShiftBrush,
+                                    radius = ringRadius,
+                                    alpha = 0.38f + 0.16f * breath,
+                                    style = Stroke(width = strokePx * 2.0f)
+                                )
+                                drawCircle(
+                                    brush = liquidShiftBrush,
+                                    radius = ringRadius,
+                                    style = Stroke(width = strokePx * 0.98f)
+                                )
+                                // Sculpted Regal Flame Spikes anchored evenly around crown
+                                val spikeCount = 8
+                                for (i in 0 until spikeCount) {
+                                    val baseDeg = i * (360f / spikeCount) - 90f
+                                    val ang = baseDeg * PI.toFloat() / 180f
+                                    val spread = 0.15f
+                                    val extra = if (i % 2 == 0) strokePx * (1.85f + 0.35f * breath) else strokePx * (1.25f + 0.25f * breath)
+                                    val pL = Offset(centerOffset.x + (ringRadius * 0.96f) * cos(ang - spread), centerOffset.y + (ringRadius * 0.96f) * sin(ang - spread))
+                                    val tip = Offset(centerOffset.x + (ringRadius + extra) * cos(ang), centerOffset.y + (ringRadius + extra) * sin(ang))
+                                    val pR = Offset(centerOffset.x + (ringRadius * 0.96f) * cos(ang + spread), centerOffset.y + (ringRadius * 0.96f) * sin(ang + spread))
+                                    val flameTipPath = Path().apply {
+                                        moveTo(pL.x, pL.y); lineTo(tip.x, tip.y); lineTo(pR.x, pR.y); close()
                                     }
+                                    drawPath(flameTipPath, color = if (i % 2 == 0) primaryGlow else secondaryGlow, alpha = 0.88f)
+                                    drawPath(flameTipPath, color = Color.White.copy(alpha = 0.72f * breath), style = Stroke(width = (strokePx * 0.24f).coerceAtLeast(1f), join = StrokeJoin.Round))
                                 }
                             }
                             FrameShapeStyle.MATRIX_DASHED -> {
-                                rotate(rotationAngle) {
-                                    drawCircle(
-                                        brush = sweepBrush,
-                                        radius = ringRadius,
-                                        style = Stroke(
-                                            width = strokePx,
-                                            cap = StrokeCap.Round,
-                                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(18f, 10f))
-                                        )
+                                // Stationary Galaxy Horizon Crest: Dual Nebula Glow Rings + Crescent Horizon Wings + Starlight Jewels
+                                drawCircle(
+                                    brush = liquidShiftBrush,
+                                    radius = ringRadius,
+                                    alpha = 0.36f + 0.18f * breath,
+                                    style = Stroke(width = strokePx * 2.05f)
+                                )
+                                drawCircle(
+                                    brush = liquidShiftBrush,
+                                    radius = ringRadius,
+                                    style = Stroke(width = strokePx * 0.95f)
+                                )
+                                drawCircle(
+                                    color = Color.White.copy(alpha = 0.75f * breath),
+                                    radius = ringRadius * 0.90f,
+                                    style = Stroke(width = (strokePx * 0.28f).coerceAtLeast(1f))
+                                )
+                                // Crescent Cosmic Wings + 4 Jewel Sparks
+                                listOf(0f, 90f, 180f, 270f).forEachIndexed { idx, deg ->
+                                    val ang = (deg - 90f) * PI.toFloat() / 180f
+                                    val pt = Offset(
+                                        centerOffset.x + (ringRadius + strokePx * 1.0f) * cos(ang),
+                                        centerOffset.y + (ringRadius + strokePx * 1.0f) * sin(ang)
                                     )
-                                }
-                                if (frame.animated) {
-                                    rotate(counterRotation) {
-                                        drawCircle(
-                                            color = Color.White.copy(alpha = 0.8f),
-                                            radius = ringRadius * 0.90f,
-                                            style = Stroke(
-                                                width = strokePx * 0.45f,
-                                                cap = StrokeCap.Round,
-                                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 16f))
-                                            )
-                                        )
-                                    }
+                                    val jewelColor = if (idx % 2 == 0) Color(0xFFFBBF24) else Color(0xFF22D3EE)
+                                    val jr = strokePx * (0.95f + 0.22f * breath)
+                                    drawLine(Color.White.copy(alpha = 0.92f), Offset(pt.x - jr, pt.y), Offset(pt.x + jr, pt.y), strokePx * 0.34f, StrokeCap.Round)
+                                    drawLine(Color.White.copy(alpha = 0.92f), Offset(pt.x, pt.y - jr), Offset(pt.x, pt.y + jr), strokePx * 0.34f, StrokeCap.Round)
+                                    drawCircle(jewelColor.copy(alpha = 0.65f * breath), jr * 0.9f, pt)
                                 }
                             }
                             FrameShapeStyle.LEGENDARY_NEON -> {
@@ -543,8 +610,6 @@ fun UserAvatar(
                                 val neonCyan = Color(0xFF00F5FF)
                                 val neonIndigo = Color(0xFF6366F1)
                                 val neonPink = Color(0xFFEC4899)
-                                val phaseRad = rotationAngle * PI.toFloat() / 180f
-                                val breath = 0.55f + 0.45f * sin(phaseRad * 2f)
 
                                 // 1. Soft Neon Corona Aura Halo
                                 drawCircle(
@@ -640,36 +705,29 @@ fun UserAvatar(
                                 }
                             }
                             FrameShapeStyle.CIRCLE_ORBIT -> {
-                                rotate(rotationAngle) {
-                                    drawCircle(
-                                        brush = sweepBrush,
-                                        radius = ringRadius,
-                                        style = Stroke(width = strokePx)
-                                    )
-                                }
+                                // Stationary Radiant Halo Crest with Liquid Gradient Glow & Symmetrical Wing Arcs
+                                drawCircle(
+                                    brush = liquidShiftBrush,
+                                    radius = ringRadius,
+                                    alpha = 0.34f + 0.16f * breath,
+                                    style = Stroke(width = strokePx * 1.9f)
+                                )
+                                drawCircle(
+                                    brush = liquidShiftBrush,
+                                    radius = ringRadius,
+                                    style = Stroke(width = strokePx * 0.96f)
+                                )
                                 if (frame.animated) {
                                     val arcTopLeft = Offset(
-                                        centerOffset.x - ringRadius,
-                                        centerOffset.y - ringRadius
+                                        centerOffset.x - (ringRadius + strokePx * 0.75f),
+                                        centerOffset.y - (ringRadius + strokePx * 0.75f)
                                     )
-                                    val arcSize = Size(ringRadius * 2f, ringRadius * 2f)
-                                    rotate(counterRotation * 0.45f) {
+                                    val arcSize = Size((ringRadius + strokePx * 0.75f) * 2f, (ringRadius + strokePx * 0.75f) * 2f)
+                                    listOf(-32f, 148f).forEachIndexed { idx, startDeg ->
                                         drawArc(
-                                            color = Color.White.copy(alpha = 0.55f),
-                                            startAngle = 0f,
-                                            sweepAngle = 42f,
-                                            useCenter = false,
-                                            topLeft = arcTopLeft,
-                                            size = arcSize,
-                                            style = Stroke(
-                                                width = strokePx * 0.55f,
-                                                cap = StrokeCap.Round
-                                            )
-                                        )
-                                        drawArc(
-                                            color = secondaryGlow.copy(alpha = 0.65f),
-                                            startAngle = 180f,
-                                            sweepAngle = 42f,
+                                            color = (if (idx == 0) Color.White else secondaryGlow).copy(alpha = 0.78f * breath + 0.2f),
+                                            startAngle = startDeg,
+                                            sweepAngle = 64f,
                                             useCenter = false,
                                             topLeft = arcTopLeft,
                                             size = arcSize,

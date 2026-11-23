@@ -783,7 +783,7 @@ fun CordlyHomeScreen(
             }
         }
 
-        // Legendary 8,000 P E Y Secret Promo Code Celebration Overlay
+        // Legendary 20,000 P E Y Secret Promo Code Celebration Overlay
         AnimatedVisibility(
             visible = secretPromoCelebration != null,
             enter = fadeIn(animationSpec = tween(240)),
